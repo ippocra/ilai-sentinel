@@ -1,0 +1,19 @@
+[Unit]
+Description=Ippocra ILAI Reporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/reporter daemon --config /etc/ilai-reporter/reporter.toml
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/ilai-reporter /var/log/ilai-reporter
+
+[Install]
+WantedBy=multi-user.target

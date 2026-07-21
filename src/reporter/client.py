@@ -55,7 +55,7 @@ class ReporterClient:
 
     def enroll(self, code: str, hostname: str, reporter_version: str, hardware_fp: str) -> dict[str, Any] | None:
         """Exchange enrollment code for device token."""
-        url = urljoin(self.server_url, "/api/reporter/enroll/")
+        url = urljoin(self.server_url, "/api/enroll/")
         try:
             resp = self.session.post(url, json={
                 "code": code,
@@ -72,24 +72,24 @@ class ReporterClient:
     # ── Reporter endpoints ──
 
     def heartbeat(self, status: str = "online", reporter_version: str = "", llm_info: dict | None = None) -> dict | None:
-        return self._post("/api/reporter/heartbeat/", {
+        return self._post("/api/heartbeat/", {
             "status": status,
             "reporter_version": reporter_version,
             "llm": llm_info,
         })
 
     def submit_metrics(self, snapshots: list[dict]) -> dict | None:
-        return self._post("/api/reporter/metrics/", {"snapshots": snapshots})
+        return self._post("/api/metrics/", {"snapshots": snapshots})
 
     def submit_hardware_profile(self, profile: dict) -> dict | None:
-        return self._post("/api/reporter/hardware-profile/", {"profile": profile})
+        return self._post("/api/hardware-profile/", {"profile": profile})
 
     def submit_session_event(self, event: dict) -> dict | None:
-        return self._post("/api/reporter/session-event/", {"event": event})
+        return self._post("/api/session-event/", {"event": event})
 
     def claim_backup_job(self) -> dict | None:
-        return self._post("/api/reporter/backup-jobs/claim/", {})
+        return self._post("/api/jobs/next/", {})
 
     def complete_backup_job(self, job_id: str, status: str = "success", **kwargs) -> dict | None:
         data = {"status": status, **kwargs}
-        return self._post(f"/api/reporter/backup-jobs/{job_id}/complete/", data)
+        return self._post(f"/api/backup-jobs/{job_id}/complete/", data)

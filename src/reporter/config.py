@@ -44,7 +44,7 @@ class Config:
     backup: BackupConfig = field(default_factory=BackupConfig)
 
 
-def load_config() -> Config:
+def load_config(config_path: str | None = None) -> Config:
     """Load config from environment variables or return defaults.
 
     For production TOML parsing we'd use `tomllib` (Python 3.11+), but
@@ -62,4 +62,12 @@ def load_config() -> Config:
     if token:
         config.device_id = token
         config.auth.token_file = "/tmp/reporter.token"
+        config.queue.path = "/tmp/reporter/queue.db"
+        config.backup.workdir = "/tmp/reporter/backups"
+    # Test/local override paths
+    base_dir = os.environ.get("REPORTER_DATA_DIR", "")
+    if base_dir:
+        config.auth.token_file = os.path.join(base_dir, "device.token")
+        config.queue.path = os.path.join(base_dir, "queue.db")
+        config.backup.workdir = os.path.join(base_dir, "backups")
     return config

@@ -266,7 +266,8 @@ def main() -> None:
     p_enroll.add_argument("--code", required=True, help="Enrollment code")
 
     # run-once
-    subparsers.add_parser("run-once", help="Single metrics collection cycle")
+    p_once = subparsers.add_parser("run-once", help="Single metrics collection cycle")
+    p_once.add_argument("--config", default=None, help="Config file path")
 
     # probe-llm
     p_probe = subparsers.add_parser("probe-llm", help="Probe for LLM backends")

@@ -1,0 +1,13 @@
+[project]
+name = "ilai-reporter"
+version = "0.1.0"
+description = "Local daemon installed on deployed ILAI units to report hardware, LLM, usage, and backup status to Mothership"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

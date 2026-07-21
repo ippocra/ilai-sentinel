@@ -26,7 +26,7 @@ def _get_gpu_info() -> list[dict[str, Any]]:
         result = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=index,model,utilization.gpu,temperature.gpu,memory.used,memory.total",
+                "--query-gpu=index,name,utilization.gpu,temperature.gpu,memory.used,memory.total",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,

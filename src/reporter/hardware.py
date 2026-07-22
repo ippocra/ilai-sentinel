@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 from datetime import datetime, timezone
+from importlib import import_module
 from typing import Any
 
 try:
@@ -16,7 +17,37 @@ try:
 except ImportError:
     psutil = None
 
+from reporter import __version__
+
 logger = logging.getLogger(__name__)
+
+
+def get_hermes_version() -> str:
+    """Return the installed Hermes Agent version, if available."""
+    try:
+        hermes_cli = import_module("hermes_cli")
+        return str(getattr(hermes_cli, "__version__"))
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["hermes", "version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            first_line = result.stdout.strip().splitlines()[0]
+            # Expected: "Hermes Agent v0.19.0 (...) · upstream ..."
+            marker = " v"
+            if marker in first_line:
+                return first_line.split(marker, 1)[1].split(" ", 1)[0]
+            return first_line
+    except (FileNotFoundError, subprocess.TimeoutExpired, IndexError):
+        pass
+
+    return ""
 
 
 def _get_gpu_info() -> list[dict[str, Any]]:
@@ -123,12 +154,15 @@ def collect() -> dict[str, Any]:
         hardware["gpu_count"] = 0
 
     hardware["collected_at"] = datetime.now(timezone.utc).isoformat()
+    hermes_version = get_hermes_version()
+    hardware["hermes_version"] = hermes_version
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "hostname": hostname,
         "hardware": hardware,
-        "reporter_version": "0.1.0",
+        "reporter_version": __version__,
+        "hermes_version": hermes_version,
     }
 
 
@@ -141,6 +175,7 @@ def collect_raw() -> dict[str, Any]:
         "cpu_cores": psutil.cpu_count(logical=True) if psutil else 0,
         "ram_gb": round(psutil.virtual_memory().total / (1024 ** 3), 2) if psutil else 0,
         "gpu_count": len(_get_gpu_info()),
+        "hermes_version": get_hermes_version(),
     }
     return {
         "fingerprint": json.dumps(fingerprint, sort_keys=True),

@@ -53,7 +53,14 @@ class ReporterClient:
 
     # ── Enrollment ──
 
-    def enroll(self, code: str, hostname: str, reporter_version: str, hardware_fp: str) -> dict[str, Any] | None:
+    def enroll(
+        self,
+        code: str,
+        hostname: str,
+        reporter_version: str,
+        hardware_fp: str,
+        hermes_version: str = "",
+    ) -> dict[str, Any] | None:
         """Exchange enrollment code for device token."""
         url = urljoin(self.server_url, "/api/enroll/")
         try:
@@ -61,6 +68,7 @@ class ReporterClient:
                 "code": code,
                 "hostname": hostname,
                 "reporter_version": reporter_version,
+                "hermes_version": hermes_version,
                 "hardware_fingerprint": hardware_fp,
             }, timeout=30)
             resp.raise_for_status()
@@ -71,10 +79,17 @@ class ReporterClient:
 
     # ── Reporter endpoints ──
 
-    def heartbeat(self, status: str = "online", reporter_version: str = "", llm_info: dict | None = None) -> dict | None:
+    def heartbeat(
+        self,
+        status: str = "online",
+        reporter_version: str = "",
+        hermes_version: str = "",
+        llm_info: dict | None = None,
+    ) -> dict | None:
         return self._post("/api/heartbeat/", {
             "status": status,
             "reporter_version": reporter_version,
+            "hermes_version": hermes_version,
             "llm": llm_info,
         })
 

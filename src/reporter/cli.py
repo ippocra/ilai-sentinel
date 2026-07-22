@@ -15,6 +15,7 @@ from typing import Any
 
 import requests
 
+from reporter import __version__
 from reporter.client import ReporterClient
 from reporter.config import Config, load_config
 from reporter.hardware import collect as hardware_collect, collect_raw
@@ -69,7 +70,8 @@ def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
     result = client.enroll(
         code=code,
         hostname=hostname,
-        reporter_version="0.1.0",
+        reporter_version=__version__,
+        hermes_version=fp["raw"].get("hermes_version", ""),
         hardware_fp=fp["fingerprint"],
     )
 

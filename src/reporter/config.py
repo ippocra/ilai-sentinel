@@ -9,7 +9,7 @@ from pathlib import Path
 
 @dataclass
 class AuthConfig:
-    token_file: str = "/var/lib/ilai-reporter/device.token"
+    token_file: str = os.path.join(Path.home(), ".local/share/ilai-reporter/device.token")
 
 
 @dataclass
@@ -21,13 +21,13 @@ class LLMConfig:
 
 @dataclass
 class QueueConfig:
-    path: str = "/var/lib/ilai-reporter/queue.db"
+    path: str = os.path.join(Path.home(), ".local/share/ilai-reporter/queue.db")
     max_days: int = 14
 
 
 @dataclass
 class BackupConfig:
-    workdir: str = "/var/lib/ilai-reporter/backups"
+    workdir: str = os.path.join(Path.home(), ".local/share/ilai-reporter/backups")
 
 
 @dataclass

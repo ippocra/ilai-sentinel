@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-License-Identifier: Apache-2.0
+
 """LLM backend probe — detects active LLM endpoints and metadata."""
 
 from __future__ import annotations

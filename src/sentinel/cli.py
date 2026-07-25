@@ -1,4 +1,7 @@
-"""Reporter CLI — enrollment, probe, collect, daemon."""
+# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Sentinel CLI — enrollment, probe, collect, daemon."""
 
 from __future__ import annotations
 
@@ -15,12 +18,12 @@ from typing import Any
 
 import requests
 
-from reporter import __version__
-from reporter.client import ReporterClient
-from reporter.config import Config, load_config
-from reporter.hardware import collect as hardware_collect, collect_raw
-from reporter.llm_probe import probe as probe_llm
-from reporter.queue import OfflineQueue
+from sentinel import __version__
+from sentinel.client import SentinelClient
+from sentinel.config import Config, load_config
+from sentinel.hardware import collect as hardware_collect, collect_raw
+from sentinel.llm_probe import probe as probe_llm
+from sentinel.queue import OfflineQueue
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +69,12 @@ def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
     fp = collect_raw()
     hostname = _get_hostname()
 
-    client = ReporterClient(server, "")  # No token for enrollment
+    client = SentinelClient(server, "")  # No token for enrollment
     result = client.enroll(
         code=code,
         hostname=hostname,
-        reporter_version=__version__,
+        sentinel_version=__version__,
         hermes_version=fp["raw"].get("hermes_version", ""),
-        hardware_fp=fp["fingerprint"],
     )
 
     if not result or "device_token" not in result:
@@ -100,7 +102,7 @@ def cmd_run_once(config_path: str | None = None) -> None:
         print("ERROR: No device token found. Run 'enroll' first.", file=sys.stderr)
         sys.exit(1)
 
-    client = ReporterClient(config.server_url, token)
+    client = SentinelClient(config.server_url, token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
 
     # Collect hardware
@@ -142,48 +144,48 @@ def cmd_collect_hardware() -> None:
 
 
 def cmd_service_install(config_path: str | None = None) -> None:
-    """Install Reporter as a systemd service."""
+    """Install Sentinel as a systemd service."""
     print("ℹ️  Service file template:")
     print()
     print("""[Unit]
-Description=Ippocra ILAI Reporter
+Description=Ippocra ILAI Sentinel
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/reporter daemon --config {config}
+ExecStart=/usr/local/bin/sentinel daemon --config {config}
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/var/lib/ilai-reporter /var/log/ilai-reporter
+ReadWritePaths=/var/lib/ilai-sentinel /var/log/ilai-sentinel
 
 [Install]
-WantedBy=multi-user.target""".format(config=config_path or "/etc/ilai-reporter/reporter.toml"))
+WantedBy=multi-user.target""".format(config=config_path or "/etc/ilai-sentinel/sentinel.toml"))
     print()
     print("Install steps:")
-    print("  1. Copy the service file above to /etc/systemd/system/ilai-reporter.service")
+    print("  1. Copy the service file above to /etc/systemd/system/ilai-sentinel.service")
     print("  2. systemctl daemon-reload")
-    print("  3. systemctl enable --now ilai-reporter")
+    print("  3. systemctl enable --now ilai-sentinel")
 
 
 def cmd_status(config_path: str | None = None) -> None:
-    """Check reporter status."""
+    """Check sentinel status."""
     config = load_config(config_path)
     token = _load_token(config.auth.token_file)
     has_token = bool(token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
 
-    print("Reporter Status:")
+    print("Sentinel Status:")
     print(f"  Server: {config.server_url}")
     print(f"  Device ID: {config.device_id or 'not enrolled'}")
     print(f"  Token: {'configured' if has_token else 'NOT configured'}")
     print(f"  Offline queue: {queue.size()} items")
-    print(f"  Config: {config_path or '/etc/ilai-reporter/reporter.toml'}")
+    print(f"  Config: {config_path or '/etc/ilai-sentinel/sentinel.toml'}")
 
 
 def cmd_daemon(config_path: str | None = None) -> None:
@@ -196,10 +198,10 @@ def cmd_daemon(config_path: str | None = None) -> None:
         logger.error("No device token found. Run 'enroll' first.")
         sys.exit(1)
 
-    client = ReporterClient(config.server_url, token)
+    client = SentinelClient(config.server_url, token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
 
-    logger.info("Reporter daemon starting (server=%s, interval=%ds)", config.server_url, config.metrics_interval_seconds)
+    logger.info("Sentinel daemon starting (server=%s, interval=%ds)", config.server_url, config.metrics_interval_seconds)
 
     while True:
         try:
@@ -237,7 +239,7 @@ def cmd_daemon(config_path: str | None = None) -> None:
                 job_result = client.claim_backup_job()
                 if job_result and job_result.get("job"):
                     logger.info("New backup job: %s", job_result["job"]["id"])
-                    # Reporter would execute the backup here
+                    # Sentinel would execute the backup here
                     # For MVP, we just log it
             except requests.RequestException as exc:
                 logger.warning("Job poll error: %s", exc)
@@ -259,7 +261,7 @@ def main() -> None:
 
     _setup_logging()
 
-    parser = argparse.ArgumentParser(prog="reporter", description="Ippocra ILAI Reporter")
+    parser = argparse.ArgumentParser(prog="sentinel", description="Ippocra ILAI Sentinel")
     subparsers = parser.add_subparsers(dest="command")
 
     # enroll
@@ -289,7 +291,7 @@ def main() -> None:
     p_service.add_argument("--config", default=None, help="Config file path")
 
     # status
-    p_status = subparsers.add_parser("status", help="Check reporter status")
+    p_status = subparsers.add_parser("status", help="Check sentinel status")
     p_status.add_argument("--config", default=None, help="Config file path")
 
     args = parser.parse_args()
@@ -308,7 +310,7 @@ def main() -> None:
         if args.action == "install":
             cmd_service_install(args.config)
         else:
-            print("Uninstall: run `systemctl disable --now ilai-reporter && rm /etc/systemd/system/ilai-reporter.service`")
+            print("Uninstall: run `systemctl disable --now ilai-sentinel && rm /etc/systemd/system/ilai-sentinel.service`")
     elif args.command == "status":
         cmd_status(args.config)
     else:

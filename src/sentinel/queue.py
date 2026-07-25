@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-License-Identifier: Apache-2.0
+
 """Offline queue — SQLite-based queue for metrics when Mothership is unreachable."""
 
 from __future__ import annotations

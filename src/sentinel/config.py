@@ -1,4 +1,7 @@
-"""Reporter configuration — loaded from /etc/ilai-reporter/reporter.toml."""
+# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Sentinel configuration — loaded from environment variables or /etc/ilai-sentinel/sentinel.toml."""
 
 from __future__ import annotations
 
@@ -9,7 +12,7 @@ from pathlib import Path
 
 @dataclass
 class AuthConfig:
-    token_file: str = os.path.join(Path.home(), ".local/share/ilai-reporter/device.token")
+    token_file: str = os.path.join(Path.home(), ".local/share/ilai-sentinel/device.token")
 
 
 @dataclass
@@ -21,18 +24,18 @@ class LLMConfig:
 
 @dataclass
 class QueueConfig:
-    path: str = os.path.join(Path.home(), ".local/share/ilai-reporter/queue.db")
+    path: str = os.path.join(Path.home(), ".local/share/ilai-sentinel/queue.db")
     max_days: int = 14
 
 
 @dataclass
 class BackupConfig:
-    workdir: str = os.path.join(Path.home(), ".local/share/ilai-reporter/backups")
+    workdir: str = os.path.join(Path.home(), ".local/share/ilai-sentinel/backups")
 
 
 @dataclass
 class Config:
-    server_url: str = "https://mothership.ippocra.com"
+    server_url: str = ""
     device_id: str = ""
     metrics_interval_seconds: int = 60
     heartbeat_interval_seconds: int = 60
@@ -51,21 +54,21 @@ def load_config(config_path: str | None = None) -> Config:
     the MVP focuses on env vars for simplicity and security.
     """
     config = Config()
-    config.server_url = os.environ.get("REPORTER_SERVER_URL", config.server_url)
+    config.server_url = os.environ.get("SENTINEL_SERVER_URL", config.server_url)
     config.metrics_interval_seconds = int(
-        os.environ.get("REPORTER_METRICS_INTERVAL", str(config.metrics_interval_seconds))
+        os.environ.get("SENTINEL_METRICS_INTERVAL", str(config.metrics_interval_seconds))
     )
     config.heartbeat_interval_seconds = int(
-        os.environ.get("REPORTER_HEARTBEAT_INTERVAL", str(config.heartbeat_interval_seconds))
+        os.environ.get("SENTINEL_HEARTBEAT_INTERVAL", str(config.heartbeat_interval_seconds))
     )
-    token = os.environ.get("REPORTER_DEVICE_TOKEN", "")
+    token = os.environ.get("SENTINEL_DEVICE_TOKEN", "")
     if token:
         config.device_id = token
-        config.auth.token_file = "/tmp/reporter.token"
-        config.queue.path = "/tmp/reporter/queue.db"
-        config.backup.workdir = "/tmp/reporter/backups"
+        config.auth.token_file = "/tmp/sentinel.token"
+        config.queue.path = "/tmp/sentinel/queue.db"
+        config.backup.workdir = "/tmp/sentinel/backups"
     # Test/local override paths
-    base_dir = os.environ.get("REPORTER_DATA_DIR", "")
+    base_dir = os.environ.get("SENTINEL_DATA_DIR", "")
     if base_dir:
         config.auth.token_file = os.path.join(base_dir, "device.token")
         config.queue.path = os.path.join(base_dir, "queue.db")

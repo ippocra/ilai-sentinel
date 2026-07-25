@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-License-Identifier: Apache-2.0
+
 """HTTP client for communicating with Mothership API."""
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-class ReporterClient:
+class SentinelClient:
     """Thin HTTP client for Mothership endpoints."""
 
     def __init__(self, server_url: str, device_token: str):
@@ -37,7 +40,7 @@ class ReporterClient:
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
-            logger.error("Reporter API POST %s failed: %s", path, exc)
+            logger.error("Sentinel API POST %s failed: %s", path, exc)
             return None
 
     def _get(self, path: str, timeout: int = 10) -> dict[str, Any] | None:
@@ -48,7 +51,7 @@ class ReporterClient:
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
-            logger.error("Reporter API GET %s failed: %s", path, exc)
+            logger.error("Sentinel API GET %s failed: %s", path, exc)
             return None
 
     # ── Enrollment ──
@@ -57,8 +60,7 @@ class ReporterClient:
         self,
         code: str,
         hostname: str,
-        reporter_version: str,
-        hardware_fp: str,
+        sentinel_version: str,
         hermes_version: str = "",
     ) -> dict[str, Any] | None:
         """Exchange enrollment code for device token."""
@@ -67,9 +69,8 @@ class ReporterClient:
             resp = self.session.post(url, json={
                 "code": code,
                 "hostname": hostname,
-                "reporter_version": reporter_version,
+                "sentinel_version": sentinel_version,
                 "hermes_version": hermes_version,
-                "hardware_fingerprint": hardware_fp,
             }, timeout=30)
             resp.raise_for_status()
             return resp.json()
@@ -77,18 +78,18 @@ class ReporterClient:
             logger.error("Enrollment failed: %s", exc)
             return None
 
-    # ── Reporter endpoints ──
+    # ── Sentinel endpoints ──
 
     def heartbeat(
         self,
         status: str = "online",
-        reporter_version: str = "",
+        sentinel_version: str = "",
         hermes_version: str = "",
         llm_info: dict | None = None,
     ) -> dict | None:
         return self._post("/api/heartbeat/", {
             "status": status,
-            "reporter_version": reporter_version,
+            "sentinel_version": sentinel_version,
             "hermes_version": hermes_version,
             "llm": llm_info,
         })

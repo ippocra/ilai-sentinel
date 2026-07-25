@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-License-Identifier: Apache-2.0
+
 """Hardware metrics collector — CPU, RAM, disk, network, GPU."""
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ try:
 except ImportError:
     psutil = None
 
-from reporter import __version__
+from sentinel import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -98,12 +101,12 @@ def _get_network_throughput() -> tuple[float, float]:
 def collect() -> dict[str, Any]:
     """Collect all available hardware metrics.
 
-    Returns a dict suitable for the Reporter metrics payload:
+    Returns a dict suitable for the sentinel metrics payload:
     {
         "timestamp": "...",
         "hostname": "...",
         "hardware": {...},
-        "reporter_version": "0.1.0"
+        "sentinel_version": "0.1.0"
     }
     """
     hostname = platform.node() or os.uname().nodename or "unknown"
@@ -161,7 +164,7 @@ def collect() -> dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "hostname": hostname,
         "hardware": hardware,
-        "reporter_version": __version__,
+        "sentinel_version": __version__,
         "hermes_version": hermes_version,
     }
 

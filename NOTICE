@@ -1,0 +1,9 @@
+ilai-sentinel
+Copyright 2024 Ippocra S.r.l.
+
+This product includes software developed at
+Ippocra S.r.l. (https://www.ippocra.com).
+
+Dependencies:
+- requests (BSD License) — https://docs.python-requests.org/
+- psutil (BSD License) — https://github.com/giampaolo/psutil

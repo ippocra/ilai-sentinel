@@ -42,6 +42,14 @@ sentinel daemon
 sentinel service install
 ```
 
+## Update
+
+To update to the latest version:
+
+```bash
+uv tool upgrade ilai-sentinel
+```
+
 ## Configuration
 
 Environment variables (for MVP):

@@ -20,7 +20,7 @@ import requests
 
 from sentinel import __version__
 from sentinel.client import SentinelClient
-from sentinel.config import Config, load_config
+from sentinel.config import Config, load_config, save_config
 from sentinel.hardware import collect as hardware_collect, collect_raw
 from sentinel.llm_probe import probe as probe_llm
 from sentinel.queue import OfflineQueue
@@ -63,13 +63,21 @@ def _get_hostname() -> str:
 def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
     """Enroll this machine with Mothership using an enrollment code."""
     config = load_config(config_path)
+
+    # Validate URL has a scheme
+    if not server.startswith(("http://", "https://")):
+        print(f"ERROR: Server URL must include a scheme (http:// or https://).", file=sys.stderr)
+        print(f"   Got: {server}", file=sys.stderr)
+        print(f"   Use: --server https://{server}", file=sys.stderr)
+        sys.exit(1)
+
     config.server_url = server
     config.device_id = ""  # Will be set by enrollment
 
     fp = collect_raw()
     hostname = _get_hostname()
 
-    client = SentinelClient(server, "")  # No token for enrollment
+    client = SentinelClient(config.server_url, "")  # No token for enrollment
     result = client.enroll(
         code=code,
         hostname=hostname,
@@ -88,10 +96,21 @@ def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
     _save_token(token, config.auth.token_file)
     config.device_id = result.get("device_id", "")
 
-    print(f"✅ Enrolled successfully.")
-    print(f"   Device ID: {result.get('device_id', '—')}")
-    print(f"   Token stored at: {config.auth.token_file}")
-    print(f"   ⚠️  Token will NOT be shown again.")
+    # Persist config to disk
+    try:
+        saved_path = save_config(config)
+        print(f"✅ Enrolled successfully.")
+        print(f"   Device ID: {result.get('device_id', '—')}")
+        print(f"   Token stored at: {config.auth.token_file}")
+        print(f"   Config saved at: {saved_path}")
+        print(f"   ⚠️  Token will NOT be shown again.")
+    except Exception as exc:
+        print(f"✅ Enrolled successfully.")
+        print(f"   Device ID: {result.get('device_id', '—')}")
+        print(f"   Token stored at: {config.auth.token_file}")
+        print(f"   ⚠️  Token will NOT be shown again.")
+        print(f"   ⚠️  Warning: could not save config: {exc}")
+        print(f"   Set SENTINEL_SERVER_URL env var to configure server.")
 
 
 def cmd_run_once(config_path: str | None = None) -> None:
@@ -145,6 +164,7 @@ def cmd_collect_hardware() -> None:
 
 def cmd_service_install(config_path: str | None = None) -> None:
     """Install Sentinel as a systemd service."""
+    config_file = config_path or str(Path.home() / ".config" / "ilai-sentinel" / "sentinel.toml")
     print("ℹ️  Service file template:")
     print()
     print("""[Unit]
@@ -165,7 +185,7 @@ ProtectHome=read-only
 ReadWritePaths=/var/lib/ilai-sentinel /var/log/ilai-sentinel
 
 [Install]
-WantedBy=multi-user.target""".format(config=config_path or "/etc/ilai-sentinel/sentinel.toml"))
+WantedBy=multi-user.target""".format(config=config_file))
     print()
     print("Install steps:")
     print("  1. Copy the service file above to /etc/systemd/system/ilai-sentinel.service")

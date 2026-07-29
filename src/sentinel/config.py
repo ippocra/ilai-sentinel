@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-FileCopyrightText: 2026 Ippocra S.r.l.
 # SPDX-License-Identifier: Apache-2.0
 
 """Sentinel configuration — loaded from environment variables, TOML file, or defaults."""

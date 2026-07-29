@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import logging
@@ -28,50 +29,42 @@ from sentinel.queue import OfflineQueue
 logger = logging.getLogger(__name__)
 
 
-def _setup_logging() -> None:
+def _setup_logging(log_level: str | None = None) -> None:
+    """Configure root logging.
+
+    Priority: explicit level > SENTINEL_LOG_LEVEL env var > INFO.
+    """
+    effective = log_level or os.environ.get("SENTINEL_LOG_LEVEL", "INFO")
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, effective.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[logging.StreamHandler(sys.stderr)],
     )
 
 
-def _save_token(token: str, path: str) -> None:
-    """Save device token with restricted permissions."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w") as f:
-        f.write(token)
-    os.chmod(p, 0o600)
+# ── Custom argument types ──
 
 
-def _load_token(path: str) -> str:
-    """Load device token from file."""
-    try:
-        return Path(path).read_text().strip()
-    except FileNotFoundError:
-        return ""
+class ServerURL(str):
+    """Argparse type that validates http/https scheme."""
 
-
-def _get_hostname() -> str:
-    return socket.gethostname() or "unknown"
+    def __new__(cls, value: str) -> ServerURL:
+        if not value.startswith(("http://", "https://")):
+            raise argparse.ArgumentTypeError(
+                f"Server URL must include a scheme (http:// or https://). "
+                f"Got: {value}"
+            )
+        return super().__new__(cls, value)
 
 
 # ── CLI Commands ──
 
 
-def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
+def cmd_enroll(args: argparse.Namespace) -> None:
     """Enroll this machine with Mothership using an enrollment code."""
-    config = load_config(config_path)
+    config = load_config(args.config)
 
-    # Validate URL has a scheme
-    if not server.startswith(("http://", "https://")):
-        print(f"ERROR: Server URL must include a scheme (http:// or https://).", file=sys.stderr)
-        print(f"   Got: {server}", file=sys.stderr)
-        print(f"   Use: --server https://{server}", file=sys.stderr)
-        sys.exit(1)
-
-    config.server_url = server
+    config.server_url = args.server
     config.device_id = ""  # Will be set by enrollment
 
     fp = collect_raw()
@@ -79,7 +72,7 @@ def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
 
     client = SentinelClient(config.server_url, "")  # No token for enrollment
     result = client.enroll(
-        code=code,
+        code=args.code,
         hostname=hostname,
         sentinel_version=__version__,
         hermes_version=fp["raw"].get("hermes_version", ""),
@@ -89,8 +82,7 @@ def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
         print("ERROR: Enrollment failed. Check server and code.", file=sys.stderr)
         sys.exit(1)
 
-    device_id = result["device_token"]
-    token = result["device_token"]  # The full token
+    token = result["device_token"]
 
     # Store credentials
     _save_token(token, config.auth.token_file)
@@ -113,9 +105,9 @@ def cmd_enroll(server: str, code: str, config_path: str | None = None) -> None:
         print(f"   Set SENTINEL_SERVER_URL env var to configure server.")
 
 
-def cmd_run_once(config_path: str | None = None) -> None:
+def cmd_run_once(args: argparse.Namespace) -> None:
     """Run a single metrics collection + submit cycle (for testing)."""
-    config = load_config(config_path)
+    config = load_config(args.config)
     token = _load_token(config.auth.token_file)
     if not token:
         print("ERROR: No device token found. Run 'enroll' first.", file=sys.stderr)
@@ -150,24 +142,30 @@ def cmd_run_once(config_path: str | None = None) -> None:
         print(f"⚠️  Submission failed — queued locally ({queue.size()} items waiting)")
 
 
-def cmd_probe_llm(ports=None, urls=None):
+def cmd_probe_llm(args: argparse.Namespace) -> None:
     """Probe for active LLM backends and print results."""
-    results = probe_llm(ports or [8888, 8000, 30000], urls or [])
+    ports = args.ports if args.ports else [8888]
+    urls = args.urls if args.urls else []
+    results = probe_llm(ports, urls)
     print(json.dumps(results, indent=2, default=str))
 
 
-def cmd_collect_hardware() -> None:
+def cmd_collect_hardware(args: argparse.Namespace) -> None:
     """Collect hardware metrics and print results."""
     data = hardware_collect()
     print(json.dumps(data, indent=2, default=str))
 
 
-def cmd_service_install(config_path: str | None = None) -> None:
-    """Install Sentinel as a systemd service."""
-    config_file = config_path or str(Path.home() / ".config" / "ilai-sentinel" / "sentinel.toml")
-    print("ℹ️  Service file template:")
-    print()
-    print("""[Unit]
+def cmd_service(args: argparse.Namespace) -> None:
+    """Service management."""
+    config_file = args.config or str(
+        Path.home() / ".config" / "ilai-sentinel" / "sentinel.toml"
+    )
+    if args.action == "install":
+        print("ℹ️  Service file template:")
+        print()
+        print(
+            """[Unit]
 Description=Ippocra ILAI Sentinel
 After=network-online.target
 Wants=network-online.target
@@ -185,17 +183,23 @@ ProtectHome=read-only
 ReadWritePaths=/var/lib/ilai-sentinel /var/log/ilai-sentinel
 
 [Install]
-WantedBy=multi-user.target""".format(config=config_file))
-    print()
-    print("Install steps:")
-    print("  1. Copy the service file above to /etc/systemd/system/ilai-sentinel.service")
-    print("  2. systemctl daemon-reload")
-    print("  3. systemctl enable --now ilai-sentinel")
+WantedBy=multi-user.target""".format(config=config_file)
+        )
+        print()
+        print("Install steps:")
+        print("  1. Copy the service file above to /etc/systemd/system/ilai-sentinel.service")
+        print("  2. systemctl daemon-reload")
+        print("  3. systemctl enable --now ilai-sentinel")
+    elif args.action == "uninstall":
+        print(
+            "Uninstall: run "
+            "`systemctl disable --now ilai-sentinel && rm /etc/systemd/system/ilai-sentinel.service`"
+        )
 
 
-def cmd_status(config_path: str | None = None) -> None:
+def cmd_status(args: argparse.Namespace) -> None:
     """Check sentinel status."""
-    config = load_config(config_path)
+    config = load_config(args.config)
     token = _load_token(config.auth.token_file)
     has_token = bool(token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
@@ -205,13 +209,13 @@ def cmd_status(config_path: str | None = None) -> None:
     print(f"  Device ID: {config.device_id or 'not enrolled'}")
     print(f"  Token: {'configured' if has_token else 'NOT configured'}")
     print(f"  Offline queue: {queue.size()} items")
-    print(f"  Config: {config_path or '/etc/ilai-sentinel/sentinel.toml'}")
+    print(f"  Config: {args.config or '/etc/ilai-sentinel/sentinel.toml'}")
 
 
-def cmd_daemon(config_path: str | None = None) -> None:
+def cmd_daemon(args: argparse.Namespace) -> None:
     """Run the main daemon loop."""
-    _setup_logging()
-    config = load_config(config_path)
+    _setup_logging(args.log_level)
+    config = load_config(args.config)
     token = _load_token(config.auth.token_file)
 
     if not token:
@@ -221,7 +225,11 @@ def cmd_daemon(config_path: str | None = None) -> None:
     client = SentinelClient(config.server_url, token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
 
-    logger.info("Sentinel daemon starting (server=%s, interval=%ds)", config.server_url, config.metrics_interval_seconds)
+    logger.info(
+        "Sentinel daemon starting (server=%s, interval=%ds)",
+        config.server_url,
+        config.metrics_interval_seconds,
+    )
 
     while True:
         try:
@@ -233,7 +241,6 @@ def cmd_daemon(config_path: str | None = None) -> None:
                     try:
                         result = client.submit_metrics([payload])
                         if result and result.get("created"):
-                            # Mark as delivered
                             logger.info("Delivered %d queued items", result["created"])
                     except Exception:
                         logger.warning("Failed to deliver queued item")
@@ -259,8 +266,6 @@ def cmd_daemon(config_path: str | None = None) -> None:
                 job_result = client.claim_backup_job()
                 if job_result and job_result.get("job"):
                     logger.info("New backup job: %s", job_result["job"]["id"])
-                    # Sentinel would execute the backup here
-                    # For MVP, we just log it
             except requests.RequestException as exc:
                 logger.warning("Job poll error: %s", exc)
 
@@ -275,66 +280,167 @@ def cmd_daemon(config_path: str | None = None) -> None:
             time.sleep(30)
 
 
-def main() -> None:
-    """CLI entry point."""
-    import argparse
+# ── Helpers ──
 
+
+def _save_token(token: str, path: str) -> None:
+    """Save device token with restricted permissions."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w") as f:
+        f.write(token)
+    os.chmod(p, 0o600)
+
+
+def _load_token(path: str) -> str:
+    """Load device token from file."""
+    try:
+        return Path(path).read_text().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def _get_hostname() -> str:
+    return socket.gethostname() or "unknown"
+
+
+# ── CLI Parser ──
+
+
+def _add_global_options(parser: argparse.ArgumentParser) -> None:
+    """Add global (non-command) options available to every subcommand."""
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to config file (default: ~/.config/ilai-sentinel/sentinel.toml)",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=None,
+        help="Logging level (default: INFO or SENTINEL_LOG_LEVEL env)",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the root argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="sentinel",
+        description="Ippocra ILAI Sentinel — local monitoring daemon",
+        epilog="Use 'sentinel <command> --help' for per-command help.",
+    )
+    _add_global_options(parser)
+
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # ── enroll ──────────────────────────────────────────────────────
+    p_enroll = subparsers.add_parser(
+        "enroll",
+        help="Enroll this machine with Mothership",
+        description="Register with Mothership using an enrollment code.",
+    )
+    p_enroll.add_argument(
+        "--server",
+        required=True,
+        type=ServerURL,
+        metavar="URL",
+        help="Mothership URL (must start with http:// or https://)",
+    )
+    p_enroll.add_argument(
+        "--code",
+        required=True,
+        help="Enrollment code",
+    )
+    p_enroll.set_defaults(func=cmd_enroll)
+
+    # ── run-once ────────────────────────────────────────────────────
+    p_once = subparsers.add_parser(
+        "run-once",
+        help="Run a single metrics collection cycle",
+        description="Collect hardware + LLM metrics and submit once (useful for testing).",
+    )
+    p_once.set_defaults(func=cmd_run_once)
+
+    # ── probe-llm ───────────────────────────────────────────────────
+    p_probe = subparsers.add_parser(
+        "probe-llm",
+        help="Probe for active LLM backends",
+        description="Scan for running LLM servers and report what is found.",
+    )
+    p_probe.add_argument(
+        "--ports",
+        nargs="+",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help="Ports to probe (default: 8888)",
+    )
+    p_probe.add_argument(
+        "--urls",
+        nargs="+",
+        default=None,
+        metavar="URL",
+        help="Extra HTTP URLs to probe",
+    )
+    p_probe.set_defaults(func=cmd_probe_llm)
+
+    # ── collect-hardware ────────────────────────────────────────────
+    subparsers.add_parser(
+        "collect-hardware",
+        help="Collect hardware metrics",
+        description="Gather hardware metrics (CPU, RAM, disk, GPU) and print as JSON.",
+    ).set_defaults(func=cmd_collect_hardware)
+
+    # ── daemon ──────────────────────────────────────────────────────
+    p_daemon = subparsers.add_parser(
+        "daemon",
+        help="Run as a background daemon",
+        description="Start the Sentinel daemon that collects metrics on a schedule.",
+    )
+    p_daemon.set_defaults(func=cmd_daemon)
+
+    # ── service ─────────────────────────────────────────────────────
+    p_service = subparsers.add_parser(
+        "service",
+        help="Service management",
+        description="Generate or manage a systemd service unit.",
+    )
+    p_service.add_argument(
+        "--action",
+        choices=["install", "uninstall"],
+        required=True,
+        help="Service action",
+    )
+    p_service.set_defaults(func=cmd_service)
+
+    # ── status ──────────────────────────────────────────────────────
+    p_status = subparsers.add_parser(
+        "status",
+        help="Check sentinel status",
+        description="Show current enrollment, queue, and config status.",
+    )
+    p_status.set_defaults(func=cmd_status)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point.
+
+    Args:
+        argv: Optional list of arguments for testing. Defaults to ``sys.argv[1:]``.
+    """
     _setup_logging()
 
-    parser = argparse.ArgumentParser(prog="sentinel", description="Ippocra ILAI Sentinel")
-    subparsers = parser.add_subparsers(dest="command")
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
-    # enroll
-    p_enroll = subparsers.add_parser("enroll", help="Enroll with Mothership")
-    p_enroll.add_argument("--server", required=True, help="Mothership URL")
-    p_enroll.add_argument("--code", required=True, help="Enrollment code")
-
-    # run-once
-    p_once = subparsers.add_parser("run-once", help="Single metrics collection cycle")
-    p_once.add_argument("--config", default=None, help="Config file path")
-
-    # probe-llm
-    p_probe = subparsers.add_parser("probe-llm", help="Probe for LLM backends")
-    p_probe.add_argument("--ports", nargs="+", type=int, default=None)
-    p_probe.add_argument("--urls", nargs="+", default=None)
-
-    # collect-hardware
-    subparsers.add_parser("collect-hardware", help="Collect hardware metrics")
-
-    # daemon
-    p_daemon = subparsers.add_parser("daemon", help="Run as daemon")
-    p_daemon.add_argument("--config", default=None, help="Config file path")
-
-    # service
-    p_service = subparsers.add_parser("service", help="Service management")
-    p_service.add_argument("action", choices=["install", "uninstall"])
-    p_service.add_argument("--config", default=None, help="Config file path")
-
-    # status
-    p_status = subparsers.add_parser("status", help="Check sentinel status")
-    p_status.add_argument("--config", default=None, help="Config file path")
-
-    args = parser.parse_args()
-
-    if args.command == "enroll":
-        cmd_enroll(args.server, args.code)
-    elif args.command == "run-once":
-        cmd_run_once(args.config)
-    elif args.command == "probe-llm":
-        cmd_probe_llm(args.ports, args.urls)
-    elif args.command == "collect-hardware":
-        cmd_collect_hardware()
-    elif args.command == "daemon":
-        cmd_daemon(args.config)
-    elif args.command == "service":
-        if args.action == "install":
-            cmd_service_install(args.config)
-        else:
-            print("Uninstall: run `systemctl disable --now ilai-sentinel && rm /etc/systemd/system/ilai-sentinel.service`")
-    elif args.command == "status":
-        cmd_status(args.config)
-    else:
+    if args.command is None:
         parser.print_help()
+        sys.exit(0)
+
+    # Run the selected command
+    args.func(args)
 
 
 if __name__ == "__main__":

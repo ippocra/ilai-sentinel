@@ -53,6 +53,29 @@ def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float:
     return 0.0
 
 
+def _model_identifier(model: dict[str, Any]) -> str:
+    """Return the stable model identifier from an OpenAI-compatible model entry."""
+    return str(model.get("id") or model.get("model") or "unknown")
+
+
+def _is_loaded_openai_model(model: dict[str, Any]) -> bool:
+    """Return True when a model entry explicitly represents the loaded model."""
+    status = model.get("status")
+    if isinstance(status, dict) and str(status.get("value", "")).lower() == "loaded":
+        return True
+    if isinstance(status, str) and status.lower() == "loaded":
+        return True
+    return bool(model.get("loaded") or model.get("is_loaded"))
+
+
+def _select_openai_model(models: list[dict[str, Any]]) -> str:
+    """Select the active model from /v1/models, falling back to the first entry."""
+    for model in models:
+        if _is_loaded_openai_model(model):
+            return _model_identifier(model)
+    return _model_identifier(models[0])
+
+
 def probe_llama_cpp(url: str = "http://127.0.0.1:8888") -> dict[str, Any] | None:
     """Probe llama.cpp server for model info."""
     # Try /props for model metadata
@@ -91,7 +114,7 @@ def probe_vllm_or_openai(url: str = "http://127.0.0.1:8000") -> dict[str, Any] |
     if not models:
         return None
 
-    model = models[0].get("id", models[0].get("model", "unknown"))
+    model = _select_openai_model(models)
     return {
         "backend": "vllm" if "vllm" in str(models_resp).lower() else "openai-compatible",
         "url": url,

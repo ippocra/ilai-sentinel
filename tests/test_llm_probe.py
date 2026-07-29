@@ -43,6 +43,26 @@ def test_probe_uses_openai_models_when_props_has_no_model(monkeypatch):
     assert result["detected_backends"] == ["openai-compatible"]
 
 
+def test_probe_uses_loaded_openai_model_instead_of_first_result(monkeypatch):
+    def fake_probe_url(url, timeout=3.0):
+        if url.endswith("/props"):
+            return {"role": "router", "model_path": "none"}
+        if url.endswith("/v1/models"):
+            return {
+                "data": [
+                    {"id": "bonsai", "status": {"value": "unloaded"}},
+                    {"id": "qwen-default", "status": {"value": "loaded"}},
+                ]
+            }
+        return None
+
+    monkeypatch.setattr(llm_probe, "_probe_url", fake_probe_url)
+
+    result = llm_probe.probe([8013], [])
+
+    assert result["backends"][0]["model"] == "qwen-default"
+
+
 def test_probe_llm_command_uses_configured_ports_and_urls_by_default(monkeypatch, capsys):
     from sentinel import cli
 

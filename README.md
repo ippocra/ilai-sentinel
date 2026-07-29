@@ -4,13 +4,31 @@ Sentinel is the local daemon installed on every deployed ILAI unit. It collects 
 
 ## Quick Start
 
+### Install
+
+**With `uv` (recommended):**
+
 ```bash
-# Install
-pip install .
+# CLI tool — available globally after one command
+uv tool install git+https://github.com/ippocra/ilai-sentinel.git
+```
 
-# Enroll with Mothership
+**Or with a local virtualenv (for development):**
+
+```bash
+uv venv .venv && uv pip install -e .
+source .venv/bin/activate
+```
+
+### Enroll with Mothership
+
+```bash
 sentinel enroll --server https://mothership.example.com --code ABCD-1234
+```
 
+### Usage
+
+```bash
 # Test a single collection cycle
 sentinel run-once
 

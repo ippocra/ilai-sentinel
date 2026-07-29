@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Ippocra S.r.l.
+# SPDX-FileCopyrightText: 2026 Ippocra S.r.l.
 # SPDX-License-Identifier: Apache-2.0
 
 """HTTP client for communicating with Mothership API."""

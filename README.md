@@ -26,6 +26,10 @@ source .venv/bin/activate
 sentinel enroll --server https://mothership.example.com --code ABCD-1234
 ```
 
+Enrollment saves the token and TOML config once. By default all commands read the
+same file at `~/.config/ilai-sentinel/sentinel.toml`; use `--config /path/to/sentinel.toml`
+before the subcommand when you intentionally want a different file.
+
 ### Usage
 
 ```bash
@@ -34,6 +38,9 @@ sentinel run-once
 
 # Check status
 sentinel status
+
+# Probe configured LLM ports/URLs
+sentinel probe-llm
 
 # Run as daemon
 sentinel daemon
@@ -52,6 +59,8 @@ uv tool upgrade ilai-sentinel
 
 ## Configuration
 
+Default TOML config: `~/.config/ilai-sentinel/sentinel.toml`.
+
 Environment variables (for MVP):
 
 | Variable | Default | Description |
@@ -60,6 +69,11 @@ Environment variables (for MVP):
 | `SENTINEL_METRICS_INTERVAL` | `60` | Seconds between metric submissions |
 | `SENTINEL_HEARTBEAT_INTERVAL` | `60` | Seconds between heartbeats |
 | `SENTINEL_DEVICE_TOKEN` | | Device token (set after enrollment) |
+
+LLM probing reads `[llm].ports` and `[llm].extra_urls` from the same config by
+default. The built-in default ports are `8888`, `8013`, `8000`, and `30000`.
+`sentinel probe-llm --ports ... --urls ...` can override those values for one
+manual probe.
 
 ## Architecture
 

@@ -6,23 +6,21 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import os
 import socket
 import sys
 import time
-import uuid
 from pathlib import Path
-from typing import Any
 
 import requests
 
 from sentinel import __version__
 from sentinel.client import SentinelClient
-from sentinel.config import Config, load_config, save_config
-from sentinel.hardware import collect as hardware_collect, collect_raw
+from sentinel.config import DEFAULT_CONFIG_PATH, load_config, save_config
+from sentinel.hardware import collect as hardware_collect
+from sentinel.hardware import collect_raw
 from sentinel.llm_probe import probe as probe_llm
 from sentinel.queue import OfflineQueue
 
@@ -63,6 +61,7 @@ class ServerURL(str):
 def cmd_enroll(args: argparse.Namespace) -> None:
     """Enroll this machine with Mothership using an enrollment code."""
     config = load_config(args.config)
+    config_path = _config_path_from_args(args)
 
     config.server_url = args.server
     config.device_id = ""  # Will be set by enrollment
@@ -90,7 +89,7 @@ def cmd_enroll(args: argparse.Namespace) -> None:
 
     # Persist config to disk
     try:
-        saved_path = save_config(config)
+        saved_path = save_config(config, config_path)
         print(f"✅ Enrolled successfully.")
         print(f"   Device ID: {result.get('device_id', '—')}")
         print(f"   Token stored at: {config.auth.token_file}")
@@ -144,8 +143,9 @@ def cmd_run_once(args: argparse.Namespace) -> None:
 
 def cmd_probe_llm(args: argparse.Namespace) -> None:
     """Probe for active LLM backends and print results."""
-    ports = args.ports if args.ports else [8888]
-    urls = args.urls if args.urls else []
+    config = load_config(args.config)
+    ports = args.ports if args.ports else config.llm.ports
+    urls = args.urls if args.urls else config.llm.extra_urls
     results = probe_llm(ports, urls)
     print(json.dumps(results, indent=2, default=str))
 
@@ -158,9 +158,7 @@ def cmd_collect_hardware(args: argparse.Namespace) -> None:
 
 def cmd_service(args: argparse.Namespace) -> None:
     """Service management."""
-    config_file = args.config or str(
-        Path.home() / ".config" / "ilai-sentinel" / "sentinel.toml"
-    )
+    config_file = str(_config_path_from_args(args))
     if args.action == "install":
         print("ℹ️  Service file template:")
         print()
@@ -200,6 +198,7 @@ WantedBy=multi-user.target""".format(config=config_file)
 def cmd_status(args: argparse.Namespace) -> None:
     """Check sentinel status."""
     config = load_config(args.config)
+    config_path = _config_path_from_args(args)
     token = _load_token(config.auth.token_file)
     has_token = bool(token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
@@ -209,7 +208,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"  Device ID: {config.device_id or 'not enrolled'}")
     print(f"  Token: {'configured' if has_token else 'NOT configured'}")
     print(f"  Offline queue: {queue.size()} items")
-    print(f"  Config: {args.config or '/etc/ilai-sentinel/sentinel.toml'}")
+    print(f"  Config: {config_path}")
 
 
 def cmd_daemon(args: argparse.Namespace) -> None:
@@ -292,6 +291,13 @@ def _save_token(token: str, path: str) -> None:
     os.chmod(p, 0o600)
 
 
+def _config_path_from_args(args: argparse.Namespace) -> Path:
+    """Return the config path every command should use for this invocation."""
+    if args.config:
+        return Path(args.config).expanduser()
+    return DEFAULT_CONFIG_PATH
+
+
 def _load_token(path: str) -> str:
     """Load device token from file."""
     try:
@@ -312,7 +318,7 @@ def _add_global_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--config",
         default=None,
-        help="Path to config file (default: ~/.config/ilai-sentinel/sentinel.toml)",
+        help=f"Path to config file (default: {DEFAULT_CONFIG_PATH})",
     )
     parser.add_argument(
         "--log-level",
@@ -373,7 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="PORT",
-        help="Ports to probe (default: 8888)",
+        help="Ports to probe (default: configured llm.ports)",
     )
     p_probe.add_argument(
         "--urls",

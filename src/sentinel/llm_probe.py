@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -20,29 +22,55 @@ def _probe_url(url: str, timeout: float = 3.0) -> dict[str, Any] | None:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode())
             return data
-    except Exception:
+    except (json.JSONDecodeError, OSError, TimeoutError, urllib.error.URLError):
         return None
+
+
+def _probe_text_url(url: str, timeout: float = 3.0) -> str | None:
+    """Try to get text from a URL, return None on failure."""
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "text/plain"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read().decode()
+    except (OSError, TimeoutError, urllib.error.URLError):
+        return None
+
+
+def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float:
+    """Extract a token throughput value from llama.cpp Prometheus metrics text."""
+    if not metrics:
+        return 0.0
+    for line in metrics.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        lower_line = line.lower()
+        if "token" not in lower_line or "second" not in lower_line:
+            continue
+        try:
+            return float(line.rsplit(maxsplit=1)[-1])
+        except ValueError:
+            continue
+    return 0.0
 
 
 def probe_llama_cpp(url: str = "http://127.0.0.1:8888") -> dict[str, Any] | None:
     """Probe llama.cpp server for model info."""
     # Try /props for model metadata
     props = _probe_url(f"{url}/props")
+    model = ""
     if props:
         model = props.get("model_name", props.get("model", ""))
-    else:
-        model = ""
+        if not model:
+            model_path = props.get("model_path", "")
+            if model_path and model_path != "none":
+                model = Path(str(model_path)).name
 
     # Try /metrics for token stats
-    metrics = _probe_url(f"{url}/metrics")
-    tokens_per_sec = 0.0
-    if metrics:
-        for line in metrics:
-            if "token_rate" in str(line):
-                try:
-                    tokens_per_sec = float(str(line).split()[-1])
-                except ValueError:
-                    pass
+    metrics = _probe_text_url(f"{url}/metrics")
+    tokens_per_sec = _parse_llama_metrics_tokens_per_sec(metrics)
+
+    if not model and not metrics:
+        return None
 
     return {
         "backend": "llama.cpp",
@@ -98,7 +126,7 @@ def probe(config_ports: list[int] | None = None, config_urls: list[str] | None =
         "detected_backends": ["llama.cpp", ...],
     }
     """
-    ports = config_ports or [8888, 8000, 30000]
+    ports = config_ports or [8888, 8013, 8000, 30000]
     urls = config_urls or []
 
     results: dict[str, Any] = {"backends": [], "detected_backends": set()}
@@ -123,5 +151,5 @@ def probe(config_ports: list[int] | None = None, config_urls: list[str] | None =
 
     return {
         "backends": results["backends"],
-        "detected_backends": list(results["detected_backends"]),
+        "detected_backends": sorted(results["detected_backends"]),
     }

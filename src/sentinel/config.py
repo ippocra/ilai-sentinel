@@ -28,7 +28,7 @@ class AuthConfig:
 @dataclass
 class LLMConfig:
     auto_detect: bool = True
-    ports: list[int] = field(default_factory=lambda: [8888])
+    ports: list[int] = field(default_factory=lambda: [8888, 8013, 8000, 30000])
     extra_urls: list[str] = field(default_factory=list)
 
 
@@ -77,10 +77,7 @@ def save_config(config: Config, path: Path | None = None) -> Path:
     if tomli_w is None:
         raise RuntimeError("tomli-w is required to save config")
     data = asdict(config)
-    # Convert nested dataclasses to dicts recursively
-    for key in ("auth", "llm", "queue", "backup"):
-        data[key] = asdict(data[key])
-    with open(target, "w") as f:
+    with open(target, "wb") as f:
         tomli_w.dump(data, f)
     os.chmod(str(target), 0o600)
     return target

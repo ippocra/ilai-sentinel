@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -15,8 +16,8 @@ import pytest
 SRC = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
-from sentinel.cli import build_parser, cmd_probe_llm, cmd_collect_hardware
-from sentinel.cli import ServerURL
+from sentinel.config import DEFAULT_CONFIG_PATH, Config
+from sentinel.cli import ServerURL, build_parser, cmd_probe_llm
 
 
 # ── Parser construction ───────────────────────────────────────────
@@ -239,6 +240,76 @@ class TestFunctionDispatch:
         from sentinel.cli import cmd_status
 
         assert self._get_func("status") is cmd_status
+
+
+# ── Config path consistency ───────────────────────────────────────
+
+
+class TestConfigPathConsistency:
+    """Commands should agree on the same implicit config file."""
+
+    def test_enroll_persists_to_explicit_config_path(self, tmp_path, monkeypatch):
+        from sentinel import cli
+
+        token_file = tmp_path / "device.token"
+        queue_file = tmp_path / "queue.db"
+        backup_dir = tmp_path / "backups"
+        explicit_config = tmp_path / "custom.toml"
+        saved_paths = []
+
+        config = Config()
+        config.auth.token_file = str(token_file)
+        config.queue.path = str(queue_file)
+        config.backup.workdir = str(backup_dir)
+
+        class FakeClient:
+            def __init__(self, server_url, token):
+                self.server_url = server_url
+                self.token = token
+
+            def enroll(self, **kwargs):
+                return {"device_token": "secret-token", "device_id": "device-123"}
+
+        def fake_save_config(config, path=None):
+            saved_paths.append(path)
+            return path
+
+        monkeypatch.setattr(cli, "load_config", lambda config_path=None: config)
+        monkeypatch.setattr(cli, "collect_raw", lambda: {"raw": {"hermes_version": "test"}})
+        monkeypatch.setattr(cli, "SentinelClient", FakeClient)
+        monkeypatch.setattr(cli, "save_config", fake_save_config)
+
+        args = argparse.Namespace(
+            config=str(explicit_config), server="https://example.com", code="ABCD"
+        )
+
+        cli.cmd_enroll(args)
+
+        assert saved_paths == [explicit_config]
+
+    def test_status_reports_same_default_config_path_used_by_loader(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from sentinel import cli
+
+        config = Config()
+        config.auth.token_file = str(tmp_path / "device.token")
+        config.queue.path = str(tmp_path / "queue.db")
+
+        monkeypatch.setattr(cli, "load_config", lambda config_path=None: config)
+
+        cli.cmd_status(argparse.Namespace(config=None))
+
+        assert f"Config: {DEFAULT_CONFIG_PATH}" in capsys.readouterr().out
+
+    def test_service_install_uses_same_default_config_path(self, capsys):
+        from sentinel import cli
+
+        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+
+        assert f"ExecStart=/usr/local/bin/sentinel daemon --config {DEFAULT_CONFIG_PATH}" in (
+            capsys.readouterr().out
+        )
 
 
 # ── CLI integration (no network) ──────────────────────────────────

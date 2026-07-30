@@ -55,6 +55,22 @@ sentinel service --action install
 and reloads the user systemd daemon. It then asks whether to enable and start
 the service with `systemctl --user enable --now ilai-sentinel`.
 
+### User service logs
+
+Because Sentinel is installed as a user-level systemd service, use
+`systemctl --user` and `journalctl --user` commands:
+
+```bash
+# Check whether the user service is running
+systemctl --user status ilai-sentinel
+
+# Follow live logs
+journalctl --user -u ilai-sentinel -f
+
+# Show recent logs
+journalctl --user -u ilai-sentinel -n 100
+```
+
 ## Update
 
 To update to the latest version:

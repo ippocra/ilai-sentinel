@@ -45,9 +45,15 @@ sentinel probe-llm
 # Run as daemon
 sentinel daemon
 
-# Install as systemd service
-sentinel service install
+# Install as a user-level systemd service
+sentinel service --action install
 ```
+
+`sentinel service --action install` creates
+`~/.config/systemd/user/ilai-sentinel.service`, writes a unit that runs
+`%h/.local/bin/sentinel daemon --config ~/.config/ilai-sentinel/sentinel.toml`,
+and reloads the user systemd daemon. It then asks whether to enable and start
+the service with `systemctl --user enable --now ilai-sentinel`.
 
 ## Update
 

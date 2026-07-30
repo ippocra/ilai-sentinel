@@ -5,14 +5,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-import time
 from typing import Any
 from urllib.parse import urljoin
 
 import requests
+
+from sentinel import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +31,24 @@ class SentinelClient:
     def _token(self) -> str:
         return self.device_token
 
+    def _with_sentinel_version(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Return a POST body annotated with the running Sentinel version."""
+        return {"sentinel_version": __version__, **data}
+
+    def _snapshot_with_sentinel_version(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Return a metrics snapshot annotated with the running Sentinel version."""
+        return {"sentinel_version": __version__, **snapshot}
+
     def _post(self, path: str, data: dict[str, Any], timeout: int = 30) -> dict[str, Any] | None:
         url = urljoin(self.server_url, path)
         headers = {"Authorization": f"Bearer {self._token()}"}
         try:
-            resp = self.session.post(url, json=data, headers=headers, timeout=timeout)
+            resp = self.session.post(
+                url,
+                json=self._with_sentinel_version(data),
+                headers=headers,
+                timeout=timeout,
+            )
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as exc:
@@ -60,7 +72,7 @@ class SentinelClient:
         self,
         code: str,
         hostname: str,
-        sentinel_version: str,
+        sentinel_version: str = __version__,
         hermes_version: str = "",
     ) -> dict[str, Any] | None:
         """Exchange enrollment code for device token."""
@@ -83,19 +95,20 @@ class SentinelClient:
     def heartbeat(
         self,
         status: str = "online",
-        sentinel_version: str = "",
+        sentinel_version: str | None = None,
         hermes_version: str = "",
         llm_info: dict | None = None,
     ) -> dict | None:
         return self._post("/api/heartbeat/", {
             "status": status,
-            "sentinel_version": sentinel_version,
+            "sentinel_version": sentinel_version or __version__,
             "hermes_version": hermes_version,
             "llm": llm_info,
         })
 
     def submit_metrics(self, snapshots: list[dict]) -> dict | None:
-        return self._post("/api/metrics/", {"snapshots": snapshots})
+        versioned_snapshots = [self._snapshot_with_sentinel_version(snapshot) for snapshot in snapshots]
+        return self._post("/api/metrics/", {"snapshots": versioned_snapshots})
 
     def submit_hardware_profile(self, profile: dict) -> dict | None:
         return self._post("/api/hardware-profile/", {"profile": profile})

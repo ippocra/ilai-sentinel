@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
+src/sentinel/_version.py
 dist/
 build/
 .venv/

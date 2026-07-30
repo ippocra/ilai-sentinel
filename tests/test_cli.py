@@ -43,6 +43,7 @@ class TestParserConstruction:
             "collect-hardware",
             "daemon",
             "service",
+            "updates",
             "status",
         }
         assert set(choices.keys()) == expected
@@ -139,6 +140,43 @@ class TestSubcommandParsing:
         args = parser.parse_args(["service", "--action", "install"])
         assert args.command == "service"
         assert args.action == "install"
+        assert args.yes is False
+        assert args.no_enable is False
+
+    def test_service_install_yes_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["service", "--action", "install", "--yes"])
+        assert args.yes is True
+        assert args.no_enable is False
+
+    def test_service_install_no_enable_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["service", "--action", "install", "--no-enable"])
+        assert args.yes is False
+        assert args.no_enable is True
+
+    def test_updates_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["updates"])
+        assert args.command == "updates"
+        assert args.upgrade_command == "uv tool upgrade ilai-sentinel"
+        assert args.skip_package_upgrade is False
+        assert args.no_restart is False
+
+    def test_updates_flags_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "updates",
+                "--upgrade-command",
+                "python -m pip install --upgrade ilai-sentinel",
+                "--skip-package-upgrade",
+                "--no-restart",
+            ]
+        )
+        assert args.upgrade_command == "python -m pip install --upgrade ilai-sentinel"
+        assert args.skip_package_upgrade is True
+        assert args.no_restart is True
 
     def test_run_once_parsed(self):
         parser = build_parser()
@@ -236,6 +274,11 @@ class TestFunctionDispatch:
 
         assert self._get_func("service") is cmd_service
 
+    def test_updates_func(self):
+        from sentinel.cli import cmd_updates
+
+        assert self._get_func("updates") is cmd_updates
+
     def test_status_func(self):
         from sentinel.cli import cmd_status
 
@@ -311,7 +354,9 @@ class TestConfigPathConsistency:
         monkeypatch.setattr(cli, "input", lambda prompt: "n", raising=False)
         monkeypatch.setattr(cli.subprocess, "run", lambda command, check: None)
 
-        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+        cli.cmd_service(
+            argparse.Namespace(config=None, action="install", yes=False, no_enable=False)
+        )
 
         unit = (tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service").read_text()
         assert f"ExecStart=%h/.local/bin/sentinel --config {DEFAULT_CONFIG_PATH} daemon" in unit
@@ -329,7 +374,9 @@ class TestConfigPathConsistency:
         monkeypatch.setattr(cli, "input", lambda prompt: "n", raising=False)
         monkeypatch.setattr(cli.subprocess, "run", fake_run)
 
-        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+        cli.cmd_service(
+            argparse.Namespace(config=None, action="install", yes=False, no_enable=False)
+        )
         output = capsys.readouterr().out
         unit_path = tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service"
         unit = unit_path.read_text()
@@ -350,7 +397,9 @@ class TestConfigPathConsistency:
         monkeypatch.setattr(cli, "input", lambda prompt: "n", raising=False)
         monkeypatch.setattr(cli.subprocess, "run", lambda command, check: None)
 
-        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+        cli.cmd_service(
+            argparse.Namespace(config=None, action="install", yes=False, no_enable=False)
+        )
 
         unit_path = tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service"
         unit = unit_path.read_text()
@@ -373,13 +422,136 @@ class TestConfigPathConsistency:
         monkeypatch.setattr(cli, "input", lambda prompt: "yes", raising=False)
         monkeypatch.setattr(cli.subprocess, "run", fake_run)
 
-        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+        cli.cmd_service(
+            argparse.Namespace(config=None, action="install", yes=False, no_enable=False)
+        )
 
         assert commands == [
             ["systemctl", "--user", "daemon-reload"],
             ["systemctl", "--user", "enable", "--now", "ilai-sentinel"],
         ]
         assert "Enabled and started ilai-sentinel" in capsys.readouterr().out
+
+    def test_service_install_yes_skips_prompt(self, tmp_path, monkeypatch):
+        from sentinel import cli
+
+        commands = []
+
+        def fake_input(prompt):
+            raise AssertionError("--yes should not prompt")
+
+        def fake_run(command, check):
+            commands.append(command)
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "input", fake_input, raising=False)
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_service(
+            argparse.Namespace(config=None, action="install", yes=True, no_enable=False)
+        )
+
+        assert commands == [
+            ["systemctl", "--user", "daemon-reload"],
+            ["systemctl", "--user", "enable", "--now", "ilai-sentinel"],
+        ]
+
+    def test_service_install_no_enable_skips_prompt(self, tmp_path, monkeypatch):
+        from sentinel import cli
+
+        commands = []
+
+        def fake_input(prompt):
+            raise AssertionError("--no-enable should not prompt")
+
+        def fake_run(command, check):
+            commands.append(command)
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "input", fake_input, raising=False)
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_service(
+            argparse.Namespace(config=None, action="install", yes=False, no_enable=True)
+        )
+
+        assert commands == [["systemctl", "--user", "daemon-reload"]]
+
+    def test_updates_runs_upgrade_refresh_and_restart(self, tmp_path, monkeypatch, capsys):
+        from sentinel import cli
+
+        commands = []
+        sentinel_bin = tmp_path / ".local" / "bin" / "sentinel"
+        sentinel_bin.parent.mkdir(parents=True)
+        sentinel_bin.write_text("#!/bin/sh\n")
+
+        def fake_run(command, check):
+            commands.append(command)
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_updates(
+            argparse.Namespace(
+                config=None,
+                upgrade_command="uv tool upgrade ilai-sentinel",
+                skip_package_upgrade=False,
+                no_restart=False,
+            )
+        )
+
+        assert commands == [
+            ["uv", "tool", "upgrade", "ilai-sentinel"],
+            [
+                str(sentinel_bin),
+                "--config",
+                str(DEFAULT_CONFIG_PATH),
+                "service",
+                "--action",
+                "install",
+                "--no-enable",
+            ],
+            ["systemctl", "--user", "restart", "ilai-sentinel"],
+        ]
+        output = capsys.readouterr().out
+        assert "Updating package: uv tool upgrade ilai-sentinel" in output
+        assert "Refreshing user service:" in output
+        assert "Restarted ilai-sentinel user service" in output
+
+    def test_updates_can_skip_upgrade_and_restart(self, tmp_path, monkeypatch, capsys):
+        from sentinel import cli
+
+        commands = []
+
+        def fake_run(command, check):
+            commands.append(command)
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_updates(
+            argparse.Namespace(
+                config="/tmp/custom.toml",
+                upgrade_command="uv tool upgrade ilai-sentinel",
+                skip_package_upgrade=True,
+                no_restart=True,
+            )
+        )
+
+        assert commands == [
+            [
+                "sentinel",
+                "--config",
+                "/tmp/custom.toml",
+                "service",
+                "--action",
+                "install",
+                "--no-enable",
+            ]
+        ]
+        output = capsys.readouterr().out
+        assert "Updating package:" not in output
+        assert "Skipped service restart" in output
 
 
 # ── CLI integration (no network) ──────────────────────────────────

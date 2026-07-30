@@ -47,6 +47,9 @@ sentinel daemon
 
 # Install as a user-level systemd service
 sentinel service --action install
+
+# Upgrade Sentinel and refresh/restart the user service
+sentinel updates
 ```
 
 `sentinel service --action install` creates
@@ -73,11 +76,20 @@ journalctl --user -u ilai-sentinel -n 100
 
 ## Update
 
-To update to the latest version:
+To update to the latest version and refresh the user-level systemd service:
 
 ```bash
-uv tool upgrade ilai-sentinel
+sentinel updates
 ```
+
+This runs `uv tool upgrade ilai-sentinel`, reinstalls the user service unit with
+the updated `sentinel` executable, reloads user systemd, and restarts
+`ilai-sentinel`. Reloading systemd is only strictly required when the unit file
+changes, but the update command does it every time so service template fixes are
+picked up consistently. Use `sentinel updates --no-restart` to refresh the
+package and unit without restarting the service, or
+`sentinel updates --skip-package-upgrade` to only refresh/restart the user
+service after installing a package some other way.
 
 ## Configuration
 

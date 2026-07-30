@@ -9,6 +9,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -161,41 +162,17 @@ def cmd_service(args: argparse.Namespace) -> None:
     """Service management."""
     config_file = str(_config_path_from_args(args))
     if args.action == "install":
-        unit_dir = Path.home() / ".config" / "systemd" / "user"
-        unit_path = unit_dir / "ilai-sentinel.service"
-        unit = _service_unit(config_file)
-
-        try:
-            unit_dir.mkdir(parents=True, exist_ok=True)
-            unit_path.write_text(unit)
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        except OSError as exc:
-            print(f"ERROR: Could not install user service: {exc}", file=sys.stderr)
-            sys.exit(1)
-        except subprocess.CalledProcessError as exc:
-            print(
-                f"ERROR: systemctl --user daemon-reload failed with exit code {exc.returncode}",
-                file=sys.stderr,
-            )
-            sys.exit(exc.returncode or 1)
-
+        unit_path = _install_user_service(config_file)
         print(f"✅ Installed user service at {unit_path}")
         print("✅ Reloaded user systemd daemon")
 
-        answer = input("Enable and start ilai-sentinel now? [y/N]: ").strip().lower()
-        if answer in {"y", "yes"}:
-            try:
-                subprocess.run(
-                    ["systemctl", "--user", "enable", "--now", "ilai-sentinel"],
-                    check=True,
-                )
-            except subprocess.CalledProcessError as exc:
-                print(
-                    "ERROR: systemctl --user enable --now ilai-sentinel failed "
-                    f"with exit code {exc.returncode}",
-                    file=sys.stderr,
-                )
-                sys.exit(exc.returncode or 1)
+        enable = args.yes
+        if not args.yes and not args.no_enable:
+            answer = input("Enable and start ilai-sentinel now? [y/N]: ").strip().lower()
+            enable = answer in {"y", "yes"}
+
+        if enable:
+            _run_systemctl(["enable", "--now", "ilai-sentinel"])
             print("✅ Enabled and started ilai-sentinel")
         else:
             print("Skipped enable/start. Run this later if needed:")
@@ -207,6 +184,36 @@ def cmd_service(args: argparse.Namespace) -> None:
             "rm ~/.config/systemd/user/ilai-sentinel.service && "
             "systemctl --user daemon-reload`"
         )
+
+
+def cmd_updates(args: argparse.Namespace) -> None:
+    """Upgrade Sentinel and refresh its user-level service wiring."""
+    config_file = str(_config_path_from_args(args))
+
+    if not args.skip_package_upgrade:
+        upgrade_command = shlex.split(args.upgrade_command)
+        print(f"Updating package: {' '.join(upgrade_command)}")
+        _run_command(upgrade_command, "package upgrade")
+
+    sentinel_command = _sentinel_executable()
+    service_command = [
+        sentinel_command,
+        "--config",
+        config_file,
+        "service",
+        "--action",
+        "install",
+        "--no-enable",
+    ]
+    print(f"Refreshing user service: {' '.join(service_command)}")
+    _run_command(service_command, "user service refresh")
+
+    if args.no_restart:
+        print("Skipped service restart. Run this later if needed:")
+        print("  systemctl --user restart ilai-sentinel")
+    else:
+        _run_systemctl(["restart", "ilai-sentinel"])
+        print("✅ Restarted ilai-sentinel user service")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -323,6 +330,53 @@ PrivateTmp=true
 [Install]
 WantedBy=default.target
 """
+
+
+def _install_user_service(config_file: str) -> Path:
+    """Write the user-level Sentinel systemd unit and reload user systemd."""
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_path = unit_dir / "ilai-sentinel.service"
+    unit = _service_unit(config_file)
+
+    try:
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        unit_path.write_text(unit)
+        _run_systemctl(["daemon-reload"])
+    except OSError as exc:
+        print(f"ERROR: Could not install user service: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    return unit_path
+
+
+def _run_systemctl(args: list[str]) -> None:
+    """Run a user-level systemctl command and exit cleanly on failure."""
+    command = ["systemctl", "--user", *args]
+    _run_command(command, "systemctl --user " + " ".join(args))
+
+
+def _run_command(command: list[str], label: str) -> None:
+    """Run a command and exit cleanly on failure."""
+    if not command:
+        print(f"ERROR: {label} command is empty", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"ERROR: {label} failed with exit code {exc.returncode}", file=sys.stderr)
+        sys.exit(exc.returncode or 1)
+    except OSError as exc:
+        print(f"ERROR: {label} could not be started: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _sentinel_executable() -> str:
+    """Return the installed Sentinel executable path used by the user service."""
+    user_bin = Path.home() / ".local" / "bin" / "sentinel"
+    if user_bin.exists():
+        return str(user_bin)
+    return "sentinel"
 
 
 def _config_path_from_args(args: argparse.Namespace) -> Path:
@@ -451,7 +505,44 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Service action",
     )
+    install_mode = p_service.add_mutually_exclusive_group()
+    install_mode.add_argument(
+        "--yes",
+        action="store_true",
+        help="With --action install, enable and start without prompting",
+    )
+    install_mode.add_argument(
+        "--no-enable",
+        action="store_true",
+        help="With --action install, install and reload without enabling or starting",
+    )
     p_service.set_defaults(func=cmd_service)
+
+    # ── updates ─────────────────────────────────────────────────────
+    p_updates = subparsers.add_parser(
+        "updates",
+        help="Upgrade Sentinel and refresh the user service",
+        description=(
+            "Run the package upgrade, reinstall the user systemd service unit, "
+            "reload user systemd, and restart the service."
+        ),
+    )
+    p_updates.add_argument(
+        "--upgrade-command",
+        default="uv tool upgrade ilai-sentinel",
+        help="Package upgrade command to run before service refresh",
+    )
+    p_updates.add_argument(
+        "--skip-package-upgrade",
+        action="store_true",
+        help="Only refresh/restart the user service; do not run the package upgrade command",
+    )
+    p_updates.add_argument(
+        "--no-restart",
+        action="store_true",
+        help="Refresh the service unit and reload systemd, but do not restart the service",
+    )
+    p_updates.set_defaults(func=cmd_updates)
 
     # ── status ──────────────────────────────────────────────────────
     p_status = subparsers.add_parser(

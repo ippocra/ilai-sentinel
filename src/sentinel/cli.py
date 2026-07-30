@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -160,38 +161,51 @@ def cmd_service(args: argparse.Namespace) -> None:
     """Service management."""
     config_file = str(_config_path_from_args(args))
     if args.action == "install":
-        print("ℹ️  Service file template:")
-        print()
-        print(
-            """[Unit]
-Description=Ippocra ILAI Sentinel
-After=network-online.target
-Wants=network-online.target
+        unit_dir = Path.home() / ".config" / "systemd" / "user"
+        unit_path = unit_dir / "ilai-sentinel.service"
+        unit = _service_unit(config_file)
 
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/sentinel daemon --config {config}
-Restart=always
-RestartSec=10
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=read-only
-ReadWritePaths=/var/lib/ilai-sentinel /var/log/ilai-sentinel
+        try:
+            unit_dir.mkdir(parents=True, exist_ok=True)
+            unit_path.write_text(unit)
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        except OSError as exc:
+            print(f"ERROR: Could not install user service: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"ERROR: systemctl --user daemon-reload failed with exit code {exc.returncode}",
+                file=sys.stderr,
+            )
+            sys.exit(exc.returncode or 1)
 
-[Install]
-WantedBy=multi-user.target""".format(config=config_file)
-        )
-        print()
-        print("Install steps:")
-        print("  1. Copy the service file above to /etc/systemd/system/ilai-sentinel.service")
-        print("  2. systemctl daemon-reload")
-        print("  3. systemctl enable --now ilai-sentinel")
+        print(f"✅ Installed user service at {unit_path}")
+        print("✅ Reloaded user systemd daemon")
+
+        answer = input("Enable and start ilai-sentinel now? [y/N]: ").strip().lower()
+        if answer in {"y", "yes"}:
+            try:
+                subprocess.run(
+                    ["systemctl", "--user", "enable", "--now", "ilai-sentinel"],
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                print(
+                    "ERROR: systemctl --user enable --now ilai-sentinel failed "
+                    f"with exit code {exc.returncode}",
+                    file=sys.stderr,
+                )
+                sys.exit(exc.returncode or 1)
+            print("✅ Enabled and started ilai-sentinel")
+        else:
+            print("Skipped enable/start. Run this later if needed:")
+            print("  systemctl --user enable --now ilai-sentinel")
     elif args.action == "uninstall":
         print(
             "Uninstall: run "
-            "`systemctl disable --now ilai-sentinel && rm /etc/systemd/system/ilai-sentinel.service`"
+            "`systemctl --user disable --now ilai-sentinel && "
+            "rm ~/.config/systemd/user/ilai-sentinel.service && "
+            "systemctl --user daemon-reload`"
         )
 
 
@@ -289,6 +303,26 @@ def _save_token(token: str, path: str) -> None:
     with open(p, "w") as f:
         f.write(token)
     os.chmod(p, 0o600)
+
+
+def _service_unit(config_file: str) -> str:
+    """Return the user-level systemd unit for Sentinel."""
+    return f"""[Unit]
+Description=Ippocra ILAI Sentinel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/sentinel daemon --config {config_file}
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
+"""
 
 
 def _config_path_from_args(args: argparse.Namespace) -> Path:
@@ -409,7 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_service = subparsers.add_parser(
         "service",
         help="Service management",
-        description="Generate or manage a systemd service unit.",
+        description="Install or manage a user-level systemd service unit.",
     )
     p_service.add_argument(
         "--action",

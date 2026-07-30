@@ -5,15 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
-ExecStart=/usr/local/bin/sentinel daemon
+ExecStart=%h/.local/bin/sentinel daemon --config %h/.config/ilai-sentinel/sentinel.toml
 Restart=always
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
-ProtectHome=read-only
-ReadWritePaths=/var/lib/ilai-sentinel /var/log/ilai-sentinel
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

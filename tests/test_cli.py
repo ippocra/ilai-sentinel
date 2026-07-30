@@ -302,14 +302,64 @@ class TestConfigPathConsistency:
 
         assert f"Config: {DEFAULT_CONFIG_PATH}" in capsys.readouterr().out
 
-    def test_service_install_uses_same_default_config_path(self, capsys):
+    def test_service_install_uses_same_default_config_path(
+        self, tmp_path, monkeypatch, capsys
+    ):
         from sentinel import cli
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "input", lambda prompt: "n", raising=False)
+        monkeypatch.setattr(cli.subprocess, "run", lambda command, check: None)
 
         cli.cmd_service(argparse.Namespace(config=None, action="install"))
 
-        assert f"ExecStart=/usr/local/bin/sentinel daemon --config {DEFAULT_CONFIG_PATH}" in (
-            capsys.readouterr().out
-        )
+        unit = (tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service").read_text()
+        assert f"ExecStart=%h/.local/bin/sentinel daemon --config {DEFAULT_CONFIG_PATH}" in unit
+        assert "Installed user service" in capsys.readouterr().out
+
+    def test_service_install_generates_user_service(self, tmp_path, monkeypatch, capsys):
+        from sentinel import cli
+
+        commands = []
+
+        def fake_run(command, check):
+            commands.append(command)
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "input", lambda prompt: "n", raising=False)
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+        output = capsys.readouterr().out
+        unit_path = tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service"
+        unit = unit_path.read_text()
+
+        assert "User=root" not in output
+        assert "User=root" not in unit
+        assert "WantedBy=default.target" in unit
+        assert "Installed user service" in output
+        assert "systemctl --user enable --now ilai-sentinel" in output
+        assert commands == [["systemctl", "--user", "daemon-reload"]]
+
+    def test_service_install_can_enable_user_service(self, tmp_path, monkeypatch, capsys):
+        from sentinel import cli
+
+        commands = []
+
+        def fake_run(command, check):
+            commands.append(command)
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "input", lambda prompt: "yes", raising=False)
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+
+        assert commands == [
+            ["systemctl", "--user", "daemon-reload"],
+            ["systemctl", "--user", "enable", "--now", "ilai-sentinel"],
+        ]
+        assert "Enabled and started ilai-sentinel" in capsys.readouterr().out
 
 
 # ── CLI integration (no network) ──────────────────────────────────

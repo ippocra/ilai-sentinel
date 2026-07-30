@@ -36,7 +36,8 @@ def test_probe_uses_openai_models_when_props_has_no_model(monkeypatch):
             "backend": "openai-compatible",
             "url": "http://127.0.0.1:8013",
             "model": "bonsai",
-            "tokens_per_sec": 0.0,
+            "tokens_per_sec": None,
+            "throughput_status": "unavailable",
             "slots": [],
         }
     ]

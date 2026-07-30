@@ -36,10 +36,10 @@ def _probe_text_url(url: str, timeout: float = 3.0) -> str | None:
         return None
 
 
-def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float:
+def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float | None:
     """Extract a token throughput value from llama.cpp Prometheus metrics text."""
     if not metrics:
-        return 0.0
+        return None
     for line in metrics.splitlines():
         if not line or line.startswith("#"):
             continue
@@ -50,7 +50,7 @@ def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float:
             return float(line.rsplit(maxsplit=1)[-1])
         except ValueError:
             continue
-    return 0.0
+    return None
 
 
 def _model_identifier(model: dict[str, Any]) -> str:
@@ -100,6 +100,7 @@ def probe_llama_cpp(url: str = "http://127.0.0.1:8888") -> dict[str, Any] | None
         "url": url,
         "model": model,
         "tokens_per_sec": tokens_per_sec,
+        "throughput_status": "reported" if tokens_per_sec is not None else "unavailable",
         "slots": [],
     }
 
@@ -119,7 +120,8 @@ def probe_vllm_or_openai(url: str = "http://127.0.0.1:8000") -> dict[str, Any] |
         "backend": "vllm" if "vllm" in str(models_resp).lower() else "openai-compatible",
         "url": url,
         "model": model,
-        "tokens_per_sec": 0.0,
+        "tokens_per_sec": None,
+        "throughput_status": "unavailable",
         "slots": [],
     }
 
@@ -135,7 +137,8 @@ def probe_sglang(url: str = "http://127.0.0.1:30000") -> dict[str, Any] | None:
         "backend": "sglang",
         "url": url,
         "model": model,
-        "tokens_per_sec": 0.0,
+        "tokens_per_sec": None,
+        "throughput_status": "unavailable",
         "slots": [],
     }
 

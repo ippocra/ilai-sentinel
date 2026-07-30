@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -16,9 +17,8 @@ import pytest
 SRC = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(SRC))
 
-from sentinel.config import DEFAULT_CONFIG_PATH, Config
 from sentinel.cli import ServerURL, build_parser, cmd_probe_llm
-
+from sentinel.config import DEFAULT_CONFIG_PATH, Config
 
 # ── Parser construction ───────────────────────────────────────────
 
@@ -314,7 +314,7 @@ class TestConfigPathConsistency:
         cli.cmd_service(argparse.Namespace(config=None, action="install"))
 
         unit = (tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service").read_text()
-        assert f"ExecStart=%h/.local/bin/sentinel daemon --config {DEFAULT_CONFIG_PATH}" in unit
+        assert f"ExecStart=%h/.local/bin/sentinel --config {DEFAULT_CONFIG_PATH} daemon" in unit
         assert "Installed user service" in capsys.readouterr().out
 
     def test_service_install_generates_user_service(self, tmp_path, monkeypatch, capsys):
@@ -340,6 +340,26 @@ class TestConfigPathConsistency:
         assert "Installed user service" in output
         assert "systemctl --user enable --now ilai-sentinel" in output
         assert commands == [["systemctl", "--user", "daemon-reload"]]
+
+    def test_service_install_execstart_argument_order_is_parseable(
+        self, tmp_path, monkeypatch
+    ):
+        from sentinel import cli
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "input", lambda prompt: "n", raising=False)
+        monkeypatch.setattr(cli.subprocess, "run", lambda command, check: None)
+
+        cli.cmd_service(argparse.Namespace(config=None, action="install"))
+
+        unit_path = tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service"
+        unit = unit_path.read_text()
+        execstart = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+        command = shlex.split(execstart.removeprefix("ExecStart="))
+        parsed = build_parser().parse_args(command[1:])
+
+        assert parsed.config == str(DEFAULT_CONFIG_PATH)
+        assert parsed.command == "daemon"
 
     def test_service_install_can_enable_user_service(self, tmp_path, monkeypatch, capsys):
         from sentinel import cli

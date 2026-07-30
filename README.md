@@ -51,7 +51,7 @@ sentinel service --action install
 
 `sentinel service --action install` creates
 `~/.config/systemd/user/ilai-sentinel.service`, writes a unit that runs
-`%h/.local/bin/sentinel daemon --config ~/.config/ilai-sentinel/sentinel.toml`,
+`%h/.local/bin/sentinel --config ~/.config/ilai-sentinel/sentinel.toml daemon`,
 and reloads the user systemd daemon. It then asks whether to enable and start
 the service with `systemctl --user enable --now ilai-sentinel`.
 

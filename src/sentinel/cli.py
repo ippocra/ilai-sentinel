@@ -314,7 +314,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/sentinel daemon --config {config_file}
+ExecStart=%h/.local/bin/sentinel --config {config_file} daemon
 Restart=always
 RestartSec=10
 NoNewPrivileges=true

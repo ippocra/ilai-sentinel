@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/sentinel daemon --config %h/.config/ilai-sentinel/sentinel.toml
+ExecStart=%h/.local/bin/sentinel --config %h/.config/ilai-sentinel/sentinel.toml daemon
 Restart=always
 RestartSec=10
 NoNewPrivileges=true

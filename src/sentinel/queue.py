@@ -52,14 +52,18 @@ class OfflineQueue:
             )
 
     def drain(self, max_items: int = 100) -> list[dict[str, Any]]:
-        """Return undelivered items from the queue, ordered by age."""
-        cutoff = (datetime.now(timezone.utc).timestamp() - self.max_days * 86400) * 1000
+        """Return undelivered item payloads, ordered by age."""
+        return [payload for _, payload in self.drain_with_ids(max_items)]
+
+    def drain_with_ids(self, max_items: int = 100) -> list[tuple[int, dict[str, Any]]]:
+        """Return undelivered queue item IDs and payloads, ordered by age."""
+        self.cleanup_old()
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute(
-                "SELECT payload FROM queue WHERE delivered_at IS NULL AND id > ? ORDER BY id LIMIT ?",
-                (cutoff, max_items),
+                "SELECT id, payload FROM queue WHERE delivered_at IS NULL ORDER BY id LIMIT ?",
+                (max_items,),
             ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [(int(row[0]), json.loads(row[1])) for row in rows]
 
     def mark_delivered(self, item_ids: list[int]) -> None:
         """Mark queue items as delivered."""

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -232,6 +233,101 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"  Config: {config_path}")
 
 
+def cmd_logs(args: argparse.Namespace) -> None:
+    """Show or follow user-service logs for Sentinel."""
+    command = [
+        "journalctl",
+        "--user",
+        "-u",
+        "ilai-sentinel",
+        "--no-pager",
+        "-n",
+        str(args.lines),
+    ]
+    if args.since:
+        command.extend(["--since", args.since])
+    if args.follow:
+        command.append("-f")
+
+    try:
+        result = subprocess.run(command, check=False)
+    except OSError as exc:
+        print(f"ERROR: could not run journalctl: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if result.returncode != 0:
+        print(
+            "ERROR: could not read Sentinel logs. Try manually:\n"
+            "  journalctl --user -u ilai-sentinel -n 100",
+            file=sys.stderr,
+        )
+        sys.exit(result.returncode or 1)
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Check local Sentinel setup and print actionable diagnostics."""
+    config = load_config(args.config)
+    config_path = _config_path_from_args(args)
+    token = _load_token(config.auth.token_file)
+    queue = OfflineQueue(config.queue.path, config.queue.max_days)
+    sentinel_bin = shutil.which("sentinel") or str(Path.home() / ".local" / "bin" / "sentinel")
+    unit_path = Path.home() / ".config" / "systemd" / "user" / "ilai-sentinel.service"
+    service = _systemctl_user_show("ilai-sentinel")
+
+    failures = 0
+    warnings = 0
+
+    def report(level: str, message: str) -> None:
+        nonlocal failures, warnings
+        icon = {"ok": "✅", "warn": "⚠️ ", "fail": "❌"}[level]
+        print(f"{icon} {message}")
+        if level == "fail":
+            failures += 1
+        elif level == "warn":
+            warnings += 1
+
+    print("Sentinel setup check:")
+    report("ok" if config_path.exists() else "fail", f"Config file: {config_path}")
+    report("ok" if config.server_url else "fail", f"Server URL: {config.server_url or 'missing'}")
+    report("ok" if config.device_id else "warn", f"Device ID: {config.device_id or 'not enrolled'}")
+    report(
+        "ok" if token else "fail",
+        f"Device token: {'configured' if token else 'missing'} ({config.auth.token_file})",
+    )
+    report("ok" if Path(sentinel_bin).exists() else "fail", f"Sentinel executable: {sentinel_bin}")
+    report("ok" if unit_path.exists() else "fail", f"User service unit: {unit_path}")
+
+    load_state = service.get("LoadState", "unknown")
+    unit_file_state = service.get("UnitFileState", "unknown")
+    active_state = service.get("ActiveState", "unknown")
+    sub_state = service.get("SubState", "unknown")
+
+    report("ok" if load_state == "loaded" else "fail", f"systemd load state: {load_state}")
+    report("ok" if unit_file_state == "enabled" else "fail", f"systemd enable state: {unit_file_state}")
+    report(
+        "ok" if active_state == "active" else "fail",
+        f"systemd active state: {active_state} ({sub_state})",
+    )
+
+    queue_size = queue.size()
+    report(
+        "ok" if queue_size == 0 else "warn",
+        f"Offline queue: {queue_size} item(s) waiting at {config.queue.path}",
+    )
+
+    if failures or warnings:
+        print("\nSuggested next steps:")
+    if unit_file_state != "enabled" or active_state != "active":
+        print("  systemctl --user enable --now ilai-sentinel")
+    if queue_size:
+        print("  sentinel logs -n 100")
+        print("  sentinel run-once")
+    if not token:
+        print("  sentinel enroll --server <mothership-url> --code <enrollment-code>")
+
+    sys.exit(1 if failures else 0)
+
+
 def cmd_daemon(args: argparse.Namespace) -> None:
     """Run the main daemon loop."""
     _setup_logging(args.log_level)
@@ -256,14 +352,15 @@ def cmd_daemon(args: argparse.Namespace) -> None:
             # 1. Drain offline queue
             if queue.size() > 0:
                 logger.info("Draining %d queued items...", queue.size())
-                items = queue.drain()
-                for payload in items:
+                items = queue.drain_with_ids()
+                for item_id, payload in items:
                     try:
                         result = client.submit_metrics([payload])
                         if result and result.get("created"):
-                            logger.info("Delivered %d queued items", result["created"])
+                            queue.mark_delivered([item_id])
+                            logger.info("Delivered queued item %d", item_id)
                     except Exception:
-                        logger.warning("Failed to deliver queued item")
+                        logger.warning("Failed to deliver queued item %d", item_id)
 
             # 2. Collect + submit metrics
             snapshot = hardware_collect()
@@ -353,6 +450,31 @@ def _run_systemctl(args: list[str]) -> None:
     """Run a user-level systemctl command and exit cleanly on failure."""
     command = ["systemctl", "--user", *args]
     _run_command(command, "systemctl --user " + " ".join(args))
+
+
+def _systemctl_user_show(unit: str) -> dict[str, str]:
+    """Return selected systemd user-service properties, or empty data if unavailable."""
+    command = [
+        "systemctl",
+        "--user",
+        "show",
+        unit,
+        "--property",
+        "LoadState,ActiveState,SubState,UnitFileState,FragmentPath,ExecMainStatus,NRestarts",
+        "--no-pager",
+    ]
+    try:
+        result = subprocess.run(command, check=False, capture_output=True, text=True)
+    except OSError:
+        return {}
+    if result.returncode != 0:
+        return {}
+    properties: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            properties[key] = value
+    return properties
 
 
 def _run_command(command: list[str], label: str) -> None:
@@ -551,6 +673,40 @@ def build_parser() -> argparse.ArgumentParser:
         description="Show current enrollment, queue, and config status.",
     )
     p_status.set_defaults(func=cmd_status)
+
+    # ── logs ────────────────────────────────────────────────────────
+    p_logs = subparsers.add_parser(
+        "logs",
+        help="Show Sentinel user-service logs",
+        description="Read ilai-sentinel logs from the user-level systemd journal.",
+    )
+    p_logs.add_argument(
+        "-n",
+        "--lines",
+        type=int,
+        default=100,
+        help="Number of recent log lines to show (default: 100)",
+    )
+    p_logs.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        help="Follow live logs",
+    )
+    p_logs.add_argument(
+        "--since",
+        default=None,
+        help='Only show logs since this time, e.g. "1 hour ago" or "2026-08-24"',
+    )
+    p_logs.set_defaults(func=cmd_logs)
+
+    # ── doctor ──────────────────────────────────────────────────────
+    p_doctor = subparsers.add_parser(
+        "doctor",
+        help="Check whether Sentinel is properly set up",
+        description="Verify config, token, executable, user service, active state, and queue.",
+    )
+    p_doctor.set_defaults(func=cmd_doctor)
 
     return parser
 

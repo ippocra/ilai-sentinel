@@ -45,6 +45,8 @@ class TestParserConstruction:
             "service",
             "updates",
             "status",
+            "logs",
+            "doctor",
         }
         assert set(choices.keys()) == expected
 
@@ -198,6 +200,25 @@ class TestSubcommandParsing:
         args = parser.parse_args(["status"])
         assert args.command == "status"
 
+    def test_logs_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["logs", "-n", "25", "--since", "1 hour ago"])
+        assert args.command == "logs"
+        assert args.lines == 25
+        assert args.since == "1 hour ago"
+        assert args.follow is False
+
+    def test_logs_follow_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["logs", "--follow"])
+        assert args.lines == 100
+        assert args.follow is True
+
+    def test_doctor_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["doctor"])
+        assert args.command == "doctor"
+
     def test_global_config_on_subcommand(self):
         # --config and --log-level are top-level options. They must be placed
         # before the subcommand name in argparse's positional-subparser model.
@@ -283,6 +304,16 @@ class TestFunctionDispatch:
         from sentinel.cli import cmd_status
 
         assert self._get_func("status") is cmd_status
+
+    def test_logs_func(self):
+        from sentinel.cli import cmd_logs
+
+        assert self._get_func("logs") is cmd_logs
+
+    def test_doctor_func(self):
+        from sentinel.cli import cmd_doctor
+
+        assert self._get_func("doctor") is cmd_doctor
 
 
 # ── Config path consistency ───────────────────────────────────────
@@ -552,6 +583,129 @@ class TestConfigPathConsistency:
         output = capsys.readouterr().out
         assert "Updating package:" not in output
         assert "Skipped service restart" in output
+
+    def test_logs_reads_user_journal(self, monkeypatch):
+        from sentinel import cli
+
+        commands = []
+
+        def fake_run(command, check):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0)
+
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_logs(argparse.Namespace(lines=42, follow=False, since="2 hours ago"))
+
+        assert commands == [
+            [
+                "journalctl",
+                "--user",
+                "-u",
+                "ilai-sentinel",
+                "--no-pager",
+                "-n",
+                "42",
+                "--since",
+                "2 hours ago",
+            ]
+        ]
+
+    def test_logs_follow_appends_follow_flag(self, monkeypatch):
+        from sentinel import cli
+
+        commands = []
+
+        def fake_run(command, check):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0)
+
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        cli.cmd_logs(argparse.Namespace(lines=100, follow=True, since=None))
+
+        assert commands[0][-1] == "-f"
+
+    def test_doctor_reports_healthy_setup(self, tmp_path, monkeypatch, capsys):
+        from sentinel import cli
+
+        config = Config()
+        config.server_url = "https://mothership.example.com"
+        config.device_id = "device-123"
+        config.auth.token_file = str(tmp_path / "device.token")
+        config.queue.path = str(tmp_path / "queue.db")
+        Path(config.auth.token_file).write_text("secret-token")
+        config_path = tmp_path / "sentinel.toml"
+        config_path.write_text("server_url = 'https://mothership.example.com'\n")
+        sentinel_bin = tmp_path / "bin" / "sentinel"
+        sentinel_bin.parent.mkdir()
+        sentinel_bin.write_text("#!/bin/sh\n")
+        unit_path = tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service"
+        unit_path.parent.mkdir(parents=True)
+        unit_path.write_text("[Service]\n")
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "load_config", lambda config_path=None: config)
+        monkeypatch.setattr(cli.shutil, "which", lambda name: str(sentinel_bin))
+        monkeypatch.setattr(
+            cli,
+            "_systemctl_user_show",
+            lambda unit: {
+                "LoadState": "loaded",
+                "UnitFileState": "enabled",
+                "ActiveState": "active",
+                "SubState": "running",
+            },
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            cli.cmd_doctor(argparse.Namespace(config=str(config_path)))
+
+        assert exc.value.code == 0
+        output = capsys.readouterr().out
+        assert "Sentinel setup check:" in output
+        assert "systemd active state: active (running)" in output
+
+    def test_doctor_flags_disabled_inactive_service(self, tmp_path, monkeypatch, capsys):
+        from sentinel import cli
+
+        config = Config()
+        config.server_url = "https://mothership.example.com"
+        config.device_id = "device-123"
+        config.auth.token_file = str(tmp_path / "device.token")
+        config.queue.path = str(tmp_path / "queue.db")
+        Path(config.auth.token_file).write_text("secret-token")
+        config_path = tmp_path / "sentinel.toml"
+        config_path.write_text("server_url = 'https://mothership.example.com'\n")
+        sentinel_bin = tmp_path / "bin" / "sentinel"
+        sentinel_bin.parent.mkdir()
+        sentinel_bin.write_text("#!/bin/sh\n")
+        unit_path = tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service"
+        unit_path.parent.mkdir(parents=True)
+        unit_path.write_text("[Service]\n")
+
+        monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(cli, "load_config", lambda config_path=None: config)
+        monkeypatch.setattr(cli.shutil, "which", lambda name: str(sentinel_bin))
+        monkeypatch.setattr(
+            cli,
+            "_systemctl_user_show",
+            lambda unit: {
+                "LoadState": "loaded",
+                "UnitFileState": "disabled",
+                "ActiveState": "inactive",
+                "SubState": "dead",
+            },
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            cli.cmd_doctor(argparse.Namespace(config=str(config_path)))
+
+        assert exc.value.code == 1
+        output = capsys.readouterr().out
+        assert "systemd enable state: disabled" in output
+        assert "systemd active state: inactive (dead)" in output
+        assert "systemctl --user enable --now ilai-sentinel" in output
 
 
 # ── CLI integration (no network) ──────────────────────────────────

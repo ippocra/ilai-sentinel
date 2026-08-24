@@ -39,6 +39,13 @@ sentinel run-once
 # Check status
 sentinel status
 
+# Check local setup, service state, token/config, and queue
+sentinel doctor
+
+# Read service logs from the user-level systemd journal
+sentinel logs -n 100
+sentinel logs -f
+
 # Probe configured LLM ports/URLs
 sentinel probe-llm
 
@@ -72,6 +79,12 @@ journalctl --user -u ilai-sentinel -f
 
 # Show recent logs
 journalctl --user -u ilai-sentinel -n 100
+
+# Same via Sentinel CLI
+sentinel logs -n 100
+
+# Run a setup/service health check
+sentinel doctor
 ```
 
 ## Update

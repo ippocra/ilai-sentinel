@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from pathlib import Path
 
@@ -48,3 +49,44 @@ def test_hermes_version_uses_cli_global_option(monkeypatch):
 
     assert hardware.get_hermes_version() == "0.21.0"
     assert calls == [["hermes", "--version"]]
+
+
+def test_hermes_version_prefers_cli_over_stale_import(monkeypatch):
+    """A stale/empty hermes_cli.__version__ must not mask the CLI (campus bug)."""
+    from sentinel import hardware
+
+    class FakeResult:
+        returncode = 0
+        stdout = "Hermes Agent v0.21.0 (2026.8.31) · upstream 63279301\n"
+
+    monkeypatch.setattr(
+        hardware.subprocess, "run", lambda *a, **k: FakeResult()
+    )
+
+    class StaleHermesCli:
+        __version__ = ""  # empty, as seen on the medical campus box
+
+    import types
+
+    monkeypatch.setitem(
+        sys.modules, "hermes_cli", types.SimpleNamespace(__version__="")
+    )
+
+    assert hardware.get_hermes_version() == "0.21.0"
+
+
+def test_hermes_version_falls_back_to_import_when_cli_missing(monkeypatch):
+    from sentinel import hardware
+
+    def raise_missing(*a, **k):
+        raise FileNotFoundError("hermes not found")
+
+    monkeypatch.setattr(hardware.subprocess, "run", raise_missing)
+
+    import types
+
+    monkeypatch.setitem(
+        sys.modules, "hermes_cli", types.SimpleNamespace(__version__="0.19.0")
+    )
+
+    assert hardware.get_hermes_version() == "0.19.0"

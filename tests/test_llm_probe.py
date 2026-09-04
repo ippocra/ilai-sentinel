@@ -84,6 +84,13 @@ def test_probe_uses_openai_models_when_props_has_no_model(monkeypatch):
             "model": "bonsai",
             "tokens_per_sec": None,
             "throughput_status": "unavailable",
+            "tokens_in_total": 0,
+            "tokens_out_total": 0,
+            "generation_tps": None,
+            "prompt_tps": None,
+            "requests_processing": None,
+            "requests_deferred": None,
+            "n_tokens_max": None,
             "slots": [],
         }
     ]
@@ -130,3 +137,37 @@ def test_probe_llm_command_uses_configured_ports_and_urls_by_default(monkeypatch
 
     assert calls == [([8013], ["http://127.0.0.1:9999"])]
     assert '"backends": []' in capsys.readouterr().out
+
+
+def test_cumulative_tokens_sums_across_labels():
+    metrics = (
+        "llamacpp:prompt_tokens_total 12500\n"
+        "llamacpp:prompt_tokens_total{backend=\"B\"} 500\n"
+        "llamacpp:tokens_predicted_total 34000\n"
+        "llamacpp:tokens_predicted_total{backend=\"B\"} 900\n"
+    )
+    assert llm_probe._parse_llama_metrics_cumulative_tokens(metrics) == (13000, 34900)
+    # Unlabeled lines must still parse (regression: name had value appended).
+    assert llm_probe._parse_llama_metrics_cumulative_tokens("llamacpp:prompt_tokens_total 7\n") == (7, 0)
+    # No metrics -> zeros.
+    assert llm_probe._parse_llama_metrics_cumulative_tokens(None) == (0, 0)
+
+
+def test_gauges_take_max_across_labels_and_parse_unlabeled():
+    metrics = (
+        "llamacpp:tokens_predicted_seconds 54.0\n"
+        "llamacpp:tokens_predicted_seconds{backend=\"A\"} 50.1\n"
+        "llamacpp:tokens_predicted_seconds{backend=\"B\"} 58.9\n"
+        "llamacpp:prompt_tokens_seconds 420.5\n"
+        "llamacpp:requests_processing 2\n"
+        "llamacpp:requests_deferred 1\n"
+        "llamacpp:n_tokens_max 4096\n"
+    )
+    gauges = llm_probe._parse_llama_metrics_gauges(metrics)
+    assert gauges["generation_tps"] == 58.9
+    assert gauges["prompt_tps"] == 420.5
+    assert gauges["requests_processing"] == 2.0
+    assert gauges["requests_deferred"] == 1.0
+    assert gauges["n_tokens_max"] == 4096.0
+    # Empty metrics -> all None.
+    assert all(v is None for v in llm_probe._parse_llama_metrics_gauges(None).values())

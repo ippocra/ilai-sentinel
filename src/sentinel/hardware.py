@@ -26,13 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 def get_hermes_version() -> str:
-    """Return the installed Hermes Agent version, if available."""
-    try:
-        hermes_cli = import_module("hermes_cli")
-        return str(getattr(hermes_cli, "__version__"))
-    except Exception:
-        pass
+    """Return the installed Hermes Agent version, if available.
 
+    Prefer the ``hermes --version`` CLI because it always reflects the
+    executable actually on PATH — the import of ``hermes_cli`` can resolve to a
+    different or stale checkout whose ``__version__`` is empty, which would
+    otherwise mask the real value. The import is only a fallback for when the
+    CLI is unavailable.
+    """
+    # 1. CLI — ground truth, matches the user-visible `hermes --version`.
     try:
         result = subprocess.run(
             ["hermes", "--version"],
@@ -41,13 +43,25 @@ def get_hermes_version() -> str:
             timeout=5,
         )
         if result.returncode == 0:
-            first_line = result.stdout.strip().splitlines()[0]
-            # Expected: "Hermes Agent v0.21.0 (...) · upstream ..."
+            first_line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+            # Expected: "Hermes Agent v0.21.0 (2026.8.31) · upstream ..."
             marker = " v"
             if marker in first_line:
-                return first_line.split(marker, 1)[1].split(" ", 1)[0]
-            return first_line
+                value = first_line.split(marker, 1)[1].split(" ", 1)[0].strip()
+                if value:
+                    return value
+            if first_line:
+                return first_line.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired, IndexError):
+        pass
+
+    # 2. Installed package — fallback when the CLI is missing or non-zero exit.
+    try:
+        hermes_cli = import_module("hermes_cli")
+        version = str(getattr(hermes_cli, "__version__", "") or "").strip()
+        if version:
+            return version
+    except Exception:
         pass
 
     return ""

@@ -32,12 +32,32 @@ class SentinelClient:
         return self.device_token
 
     def _with_sentinel_version(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Return a POST body annotated with the running Sentinel version."""
-        return {"sentinel_version": __version__, **data}
+        """Return a POST body annotated with the running Sentinel version.
+
+        The mothership stores this in `reporter_version`; we send both keys so
+        older and newer backends each find the field they expect.
+        """
+        return {
+            "sentinel_version": __version__,
+            "reporter_version": __version__,
+            **data,
+        }
 
     def _snapshot_with_sentinel_version(self, snapshot: dict[str, Any]) -> dict[str, Any]:
-        """Return a metrics snapshot annotated with the running Sentinel version."""
-        return {"sentinel_version": __version__, **snapshot}
+        """Return a metrics snapshot annotated with the running Sentinel version.
+
+        The mothership's metrics ingestion reads `reporter_version`; send both
+        keys so the fleet dashboard's Sentinel column is populated. The
+        `reporter_version` mirrors the snapshot's own `sentinel_version` when
+        present so the two stay consistent, falling back to the module version
+        otherwise.
+        """
+        version = snapshot.get("sentinel_version", __version__)
+        return {
+            "sentinel_version": version,
+            "reporter_version": version,
+            **snapshot,
+        }
 
     def _post(self, path: str, data: dict[str, Any], timeout: int = 30) -> dict[str, Any] | None:
         url = urljoin(self.server_url, path)
@@ -82,6 +102,7 @@ class SentinelClient:
                 "code": code,
                 "hostname": hostname,
                 "sentinel_version": sentinel_version,
+                "reporter_version": sentinel_version,
                 "hermes_version": hermes_version,
             }, timeout=30)
             resp.raise_for_status()
@@ -102,6 +123,7 @@ class SentinelClient:
         return self._post("/api/heartbeat/", {
             "status": status,
             "sentinel_version": sentinel_version or __version__,
+            "reporter_version": sentinel_version or __version__,
             "hermes_version": hermes_version,
             "llm": llm_info,
         })

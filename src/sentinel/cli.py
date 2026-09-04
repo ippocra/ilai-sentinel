@@ -24,7 +24,7 @@ from sentinel.client import SentinelClient
 from sentinel.config import DEFAULT_CONFIG_PATH, load_config, save_config
 from sentinel.hardware import collect as hardware_collect
 from sentinel.hardware import collect_raw
-from sentinel.llm_probe import probe as probe_llm
+from sentinel.llm_probe import TokenCounter, probe as probe_llm
 from sentinel.queue import OfflineQueue
 
 logger = logging.getLogger(__name__)
@@ -328,6 +328,47 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     sys.exit(1 if failures else 0)
 
 
+def _maybe_report_token_usage(
+    client: "SentinelClient",
+    counter: "TokenCounter",
+    probe_result: dict,
+    logger: logging.Logger,
+) -> None:
+    """Diff cumulative token counters and report a session event if tokens moved.
+
+    The mothership dashboard's token totals come from UsageSession rows, which
+    are only created by the session-event endpoint. llama.cpp exposes
+    cumulative token counters; by diffing them between probe cycles we can
+    report the tokens consumed during the interval as a single session event.
+    """
+    delta = counter.sample(probe_result)
+    if delta is None:
+        return
+    tokens_in, tokens_out = delta
+    if tokens_in <= 0 and tokens_out <= 0:
+        return
+    # Report as a completed usage session: the interval's consumed tokens.
+    event = {
+        "action": "end",
+        "model": "",
+        "backend": "",
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "avg_latency_ms": 0,
+        "tags": {"source": "sentinel-token-delta"},
+    }
+    try:
+        result = client.submit_session_event(event)
+        if result:
+            logger.info(
+                "Reported token usage: %d in / %d out", tokens_in, tokens_out
+            )
+        else:
+            logger.warning("Token usage session event was not accepted")
+    except Exception as exc:
+        logger.warning("Failed to report token usage: %s", exc)
+
+
 def cmd_daemon(args: argparse.Namespace) -> None:
     """Run the main daemon loop."""
     _setup_logging(args.log_level)
@@ -340,6 +381,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
 
     client = SentinelClient(config.server_url, token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
+    token_counter = TokenCounter()
 
     logger.info(
         "Sentinel daemon starting (server=%s, interval=%ds)",
@@ -378,7 +420,10 @@ def cmd_daemon(args: argparse.Namespace) -> None:
                 queue.add(payload)
                 logger.warning("Metrics submit error: %s — queued", exc)
 
-            # 3. Check for backup jobs
+            # 3. Report token usage (diff of cumulative counters)
+            _maybe_report_token_usage(client, token_counter, llm_results, logger)
+
+            # 4. Check for backup jobs
             try:
                 job_result = client.claim_backup_job()
                 if job_result and job_result.get("job"):
@@ -386,7 +431,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
             except requests.RequestException as exc:
                 logger.warning("Job poll error: %s", exc)
 
-            # 4. Wait for next cycle
+            # 5. Wait for next cycle
             time.sleep(config.metrics_interval_seconds)
 
         except KeyboardInterrupt:

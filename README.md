@@ -36,11 +36,14 @@ before the subcommand when you intentionally want a different file.
 # Test a single collection cycle
 sentinel run-once
 
-# Check status
+# Check status (includes the installed Sentinel version)
 sentinel status
 
-# Check local setup, service state, token/config, and queue
+# Check local setup, service state, token/config, and queue (shows version first)
 sentinel doctor
+
+# Print the installed Sentinel version and exit
+sentinel --version
 
 # Read service logs from the user-level systemd journal
 sentinel logs -n 100

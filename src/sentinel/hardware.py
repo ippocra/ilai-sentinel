@@ -35,6 +35,10 @@ def get_hermes_version() -> str:
     CLI is unavailable.
     """
     # 1. CLI — ground truth, matches the user-visible `hermes --version`.
+    #    The executable on PATH may itself be a launcher (e.g. a uv tool
+    #    wrapper), which defers to the real interpreter it invokes. In that
+    #    case the `hermes_cli` module resolves to the actual distribution,
+    #    so prefer it over the launcher's stale or missing `__version__`.
     try:
         result = subprocess.run(
             ["hermes", "--version"],

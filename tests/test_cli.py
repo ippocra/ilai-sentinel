@@ -57,6 +57,7 @@ class TestParserConstruction:
         ]
         assert "--config" in option_strings
         assert "--log-level" in option_strings
+        assert "--version" in option_strings
         assert "-h" in option_strings or "--help" in option_strings
 
 

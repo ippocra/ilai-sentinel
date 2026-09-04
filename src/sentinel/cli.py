@@ -226,6 +226,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
 
     print("Sentinel Status:")
+    print(f"  Version: {__version__}")
     print(f"  Server: {config.server_url}")
     print(f"  Device ID: {config.device_id or 'not enrolled'}")
     print(f"  Token: {'configured' if has_token else 'NOT configured'}")
@@ -287,6 +288,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             warnings += 1
 
     print("Sentinel setup check:")
+    report("ok", f"Version: {__version__}")
     report("ok" if config_path.exists() else "fail", f"Config file: {config_path}")
     report("ok" if config.server_url else "fail", f"Server URL: {config.server_url or 'missing'}")
     report("ok" if config.device_id else "warn", f"Device ID: {config.device_id or 'not enrolled'}")
@@ -589,6 +591,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="sentinel",
         description="Ippocra ILAI Sentinel — local monitoring daemon",
         epilog="Use 'sentinel <command> --help' for per-command help.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Print the Sentinel version and exit",
     )
     _add_global_options(parser)
 

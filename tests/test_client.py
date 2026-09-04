@@ -46,10 +46,22 @@ def test_all_client_post_payloads_include_sentinel_version(monkeypatch):
         "https://mothership.example.com/api/backup-jobs/job-123/complete/",
     ]
     for item in posted:
+        # Every POST now carries the Sentinel version under BOTH the
+        # legacy `sentinel_version` key and the `reporter_version` key the
+        # mothership backend actually persists (contract-drift regression guard).
         assert item["json"]["sentinel_version"] == __version__
+        assert item["json"]["reporter_version"] == __version__
 
     metrics_payload = posted[2]["json"]
     assert metrics_payload["snapshots"] == [
-        {"sentinel_version": __version__, "cpu_usage": 10},
-        {"sentinel_version": "custom", "cpu_usage": 20},
+        {
+            "sentinel_version": __version__,
+            "reporter_version": __version__,
+            "cpu_usage": 10,
+        },
+        {
+            "sentinel_version": "custom",
+            "reporter_version": "custom",
+            "cpu_usage": 20,
+        },
     ]

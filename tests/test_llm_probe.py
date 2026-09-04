@@ -11,6 +11,16 @@ from sentinel import llm_probe
 from sentinel.config import Config
 
 
+def test_parser_accepts_labeled_rate_metrics_and_ignores_counters():
+    metrics = """
+# HELP llama_tokens_total total
+llama_tokens_total 999
+llama_tokens_per_second{slot=\"0\"} 18.5
+llama_generation_rate 11.0
+"""
+    assert llm_probe._parse_llama_metrics_tokens_per_sec(metrics) == 18.5
+
+
 def test_probe_ignores_ports_without_recognized_llm_endpoint(monkeypatch):
     monkeypatch.setattr(llm_probe, "_probe_url", lambda url, timeout=3.0: None)
 

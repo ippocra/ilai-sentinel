@@ -37,20 +37,57 @@ def _probe_text_url(url: str, timeout: float = 3.0) -> str | None:
 
 
 def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float | None:
-    """Extract a token throughput value from llama.cpp Prometheus metrics text."""
+    """Extract a current token throughput value from Prometheus metrics.
+
+    llama.cpp has used several metric names over time. Prefer explicit
+    rate/generation metrics and ignore cumulative token counters.
+    """
     if not metrics:
         return None
+    candidates: list[tuple[int, float]] = []
     for line in metrics.splitlines():
         if not line or line.startswith("#"):
             continue
-        lower_line = line.lower()
-        if "token" not in lower_line or "second" not in lower_line:
-            continue
+        name, _, raw_value = line.partition("{")
+        if not raw_value:
+            name, _, raw_value = line.rpartition(" ")
         try:
-            return float(line.rsplit(maxsplit=1)[-1])
+            value = float(raw_value.rsplit(maxsplit=1)[-1])
         except ValueError:
             continue
-    return None
+        metric = name.lower()
+        if "token" not in metric:
+            continue
+        if any(marker in metric for marker in ("_total", "_count", "_sum")):
+            continue
+        priority = 0
+        if "predicted_tokens" in metric:
+            priority = 3
+        elif "tokens_per_second" in metric:
+            priority = 2
+        elif "tokens_second" in metric:
+            priority = 2
+        elif "eval_rate" in metric or "generation_rate" in metric or "throughput" in metric or "generation" in metric:
+            priority = 1
+        elif "second" in metric or "rate" in metric:
+            priority = 0
+        if priority:
+            candidates.append((priority, value))
+    return max(candidates, default=(0, None))[1]
+
+
+def _probe_tokens_per_sec(url: str) -> float | None:
+    """Read optional Prometheus throughput from any compatible backend."""
+    metrics = _probe_text_url(f"{url}/metrics")
+    if metrics is None:
+        # Router-style servers may require the active model name for metrics.
+        models_resp = _probe_url(f"{url}/v1/models")
+        models = models_resp.get("data", []) if models_resp else []
+        if models:
+            model = _select_openai_model(models)
+            if model:
+                metrics = _probe_text_url(f"{url}/metrics?model={model}")
+    return _parse_llama_metrics_tokens_per_sec(metrics)
 
 
 def _model_identifier(model: dict[str, Any]) -> str:
@@ -116,12 +153,13 @@ def probe_vllm_or_openai(url: str = "http://127.0.0.1:8000") -> dict[str, Any] |
         return None
 
     model = _select_openai_model(models)
+    tokens_per_sec = _probe_tokens_per_sec(url)
     return {
         "backend": "vllm" if "vllm" in str(models_resp).lower() else "openai-compatible",
         "url": url,
         "model": model,
-        "tokens_per_sec": None,
-        "throughput_status": "unavailable",
+        "tokens_per_sec": tokens_per_sec,
+        "throughput_status": "reported" if tokens_per_sec is not None else "unavailable",
         "slots": [],
     }
 

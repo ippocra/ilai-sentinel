@@ -138,8 +138,8 @@ def collect() -> dict[str, Any]:
 
             # Network throughput
             rx_mb, tx_mb = _get_network_throughput()
-            hardware["network_rx_mb"] = rx_mb
-            hardware["network_tx_mb"] = tx_mb
+            hardware["network_rx_mbps"] = rx_mb
+            hardware["network_tx_mbps"] = tx_mb
         except Exception as exc:
             logger.warning("psutil collection failed: %s", exc)
     else:

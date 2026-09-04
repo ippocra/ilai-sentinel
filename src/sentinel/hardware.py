@@ -35,14 +35,14 @@ def get_hermes_version() -> str:
 
     try:
         result = subprocess.run(
-            ["hermes", "version"],
+            ["hermes", "--version"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
             first_line = result.stdout.strip().splitlines()[0]
-            # Expected: "Hermes Agent v0.19.0 (...) · upstream ..."
+            # Expected: "Hermes Agent v0.21.0 (...) · upstream ..."
             marker = " v"
             if marker in first_line:
                 return first_line.split(marker, 1)[1].split(" ", 1)[0]

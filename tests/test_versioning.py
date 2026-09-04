@@ -29,3 +29,22 @@ def test_runtime_version_is_resolved():
     assert sentinel.__version__
     assert sentinel.__version__ != "0.1.0"
     assert sentinel.__version__ != "0.1.1"
+
+
+def test_hermes_version_uses_cli_global_option(monkeypatch):
+    from sentinel import hardware
+
+    calls = []
+
+    class FakeResult:
+        returncode = 0
+        stdout = "Hermes Agent v0.21.0 (2026.8.31) · upstream abc123\n"
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return FakeResult()
+
+    monkeypatch.setattr(hardware.subprocess, "run", fake_run)
+
+    assert hardware.get_hermes_version() == "0.21.0"
+    assert calls == [["hermes", "--version"]]

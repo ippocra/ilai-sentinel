@@ -61,12 +61,16 @@ def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float | None:
         if any(marker in metric for marker in ("_total", "_count", "_sum")):
             continue
         priority = 0
-        if "tokens_per_second" in metric or "tokens_second" in metric:
+        if "predicted_tokens" in metric:
             priority = 3
-        elif "eval_rate" in metric or "generation_rate" in metric or "throughput" in metric:
+        elif "tokens_per_second" in metric:
             priority = 2
-        elif "second" in metric or "rate" in metric:
+        elif "tokens_second" in metric:
+            priority = 2
+        elif "eval_rate" in metric or "generation_rate" in metric or "throughput" in metric or "generation" in metric:
             priority = 1
+        elif "second" in metric or "rate" in metric:
+            priority = 0
         if priority:
             candidates.append((priority, value))
     return max(candidates, default=(0, None))[1]
@@ -74,7 +78,16 @@ def _parse_llama_metrics_tokens_per_sec(metrics: str | None) -> float | None:
 
 def _probe_tokens_per_sec(url: str) -> float | None:
     """Read optional Prometheus throughput from any compatible backend."""
-    return _parse_llama_metrics_tokens_per_sec(_probe_text_url(f"{url}/metrics"))
+    metrics = _probe_text_url(f"{url}/metrics")
+    if metrics is None:
+        # Router-style servers may require the active model name for metrics.
+        models_resp = _probe_url(f"{url}/v1/models")
+        models = models_resp.get("data", []) if models_resp else []
+        if models:
+            model = _select_openai_model(models)
+            if model:
+                metrics = _probe_text_url(f"{url}/metrics?model={model}")
+    return _parse_llama_metrics_tokens_per_sec(metrics)
 
 
 def _model_identifier(model: dict[str, Any]) -> str:

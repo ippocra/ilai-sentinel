@@ -21,6 +21,42 @@ llama_generation_rate 11.0
     assert llm_probe._parse_llama_metrics_tokens_per_sec(metrics) == 18.5
 
 
+def test_parser_prefers_generation_throughput_over_prompt_throughput():
+    metrics = """
+llamacpp:prompt_tokens_seconds 716.925
+llamacpp:predicted_tokens_seconds 54.0077
+"""
+    assert llm_probe._parse_llama_metrics_tokens_per_sec(metrics) == 54.0077
+
+
+def test_probe_reads_metrics_for_loaded_model_on_router(monkeypatch):
+    def fake_probe_url(url, timeout=3.0):
+        if url.endswith("/props"):
+            return {"role": "router", "model_path": "none"}
+        if url.endswith("/v1/models"):
+            return {
+                "data": [
+                    {"id": "unloaded", "status": {"value": "unloaded"}},
+                    {"id": "qwen", "status": {"value": "loaded"}},
+                ]
+            }
+        return None
+
+    def fake_probe_text_url(url, timeout=3.0):
+        if url == "http://127.0.0.1:8013/metrics?model=qwen":
+            return "llamacpp:predicted_tokens_seconds 54.0077\n"
+        return None
+
+    monkeypatch.setattr(llm_probe, "_probe_url", fake_probe_url)
+    monkeypatch.setattr(llm_probe, "_probe_text_url", fake_probe_text_url)
+
+    result = llm_probe.probe([8013], [])
+
+    assert result["backends"][0]["model"] == "qwen"
+    assert result["backends"][0]["tokens_per_sec"] == 54.0077
+    assert result["backends"][0]["throughput_status"] == "reported"
+
+
 def test_probe_ignores_ports_without_recognized_llm_endpoint(monkeypatch):
     monkeypatch.setattr(llm_probe, "_probe_url", lambda url, timeout=3.0: None)
 

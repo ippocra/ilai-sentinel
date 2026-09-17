@@ -306,19 +306,125 @@ def probe_sglang(url: str = "http://127.0.0.1:30000") -> dict[str, Any] | None:
     }
 
 
-def probe(config_ports: list[int] | None = None, config_urls: list[str] | None = None) -> dict[str, Any]:
-    """Probe for active LLM backends across configured ports and URLs.
+def _probe_url_auth(url: str, api_key: str = "", timeout: float = 3.0) -> dict[str, Any] | None:
+    """Probe a URL that requires a Bearer token; returns the JSON payload or
+    None. HTTP 401/403 raises HTTPAuthError so callers can map it to
+    "auth_failed" instead of a generic failure."""
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise HTTPAuthError(str(exc)) from exc
+        raise
+
+
+class HTTPAuthError(Exception):
+    """Remote endpoint rejected the API key (HTTP 401/403)."""
+
+
+def probe_remote(
+    url: str,
+    api_key: str,
+    model: str = "",
+    timeout: float = 5.0,
+) -> dict[str, Any] | None:
+    """Probe a remote OpenAI-compatible inference endpoint (e.g. Regolo).
+
+    Returns a backend entry with a ``status`` field:
+      - "ok"          — endpoint reachable, key valid, model resolved.
+      - "auth_failed" — HTTP 401/403 (invalid or expired key).
+      - "unreachable" — network error or non-2xx response.
+      - "no_models"   — reachable but /v1/models returned nothing (and no
+        model was pinned in config).
+
+    Returns None only if url is empty (caller should skip). Remote endpoints
+    expose no Prometheus counters, so cumulative token fields are 0; token
+    usage for cloud boxes is accounted per API key on the provider side
+    (Regolo dashboard), not scraped here.
+    """
+    if not url:
+        return None
+
+    base = url.rstrip("/")
+    try:
+        data = _probe_url_auth(f"{base}/models", api_key, timeout)
+    except HTTPAuthError:
+        return _remote_entry(base, "auth_failed", model, url)
+    except (OSError, TimeoutError):
+        return _remote_entry(base, "unreachable", model, url)
+    if data is None:
+        return _remote_entry(base, "unreachable", model, url)
+
+    models = data.get("data", []) if isinstance(data, dict) else []
+    if not models:
+        if model:
+            return _remote_entry(base, "ok", model, url)
+        return _remote_entry(base, "no_models", "", url)
+
+    resolved = _select_openai_model(models) or model
+    return _remote_entry(base, "ok", resolved, url)
+
+
+def _remote_entry(
+    base: str,
+    status: str,
+    model: str,
+    config_url: str,
+) -> dict[str, Any]:
+    """Build a backend entry for a remote endpoint (same shape as local probes)."""
+    return {
+        "backend": "regolo",
+        "url": base,
+        "config_url": config_url,
+        "model": model,
+        "status": status,
+        "tokens_per_sec": None,
+        "throughput_status": "unavailable",
+        # Remote APIs expose no cumulative counters; per-key token usage is
+        # tracked on the provider dashboard (Regolo), not scraped here.
+        "tokens_in_total": 0,
+        "tokens_out_total": 0,
+        "generation_tps": None,
+        "prompt_tps": None,
+        "requests_processing": None,
+        "requests_deferred": None,
+        "n_tokens_max": None,
+        "slots": [],
+    }
+
+
+def probe(
+    config_ports: list[int] | None = None,
+    config_urls: list[str] | None = None,
+    remote_url: str = "",
+    remote_api_key: str = "",
+    remote_model: str = "",
+) -> dict[str, Any]:
+    """Probe for active LLM backends: remote endpoint first, then local ports.
 
     Returns:
     {
         "backends": [{"backend": "...", "url": "...", "model": "...", ...}],
-        "detected_backends": ["llama.cpp", ...],
+        "detected_backends": ["regolo", "llama.cpp", ...],
     }
     """
     ports = config_ports or [8888, 8013, 8000, 30000]
     urls = config_urls or []
 
     results: dict[str, Any] = {"backends": [], "detected_backends": set()}
+
+    # Remote (cloud) inference first — on ILAI-on-Cloud boxes this is the
+    # primary backend (Regolo) and local port scanning finds nothing.
+    if remote_url:
+        remote = probe_remote(remote_url, remote_api_key, remote_model)
+        if remote:
+            results["backends"].append(remote)
+            results["detected_backends"].add(remote["backend"])
 
     for port in ports:
         url = f"http://127.0.0.1:{port}"

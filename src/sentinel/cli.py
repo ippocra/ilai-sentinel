@@ -127,6 +127,7 @@ def cmd_run_once(args: argparse.Namespace) -> None:
         remote_url=config.llm.remote_url,
         remote_api_key=config.llm.remote_api_key,
         remote_model=config.llm.remote_model,
+        auto_detect_remote=config.llm.auto_detect,
     )
 
     # Build payload
@@ -161,6 +162,7 @@ def cmd_probe_llm(args: argparse.Namespace) -> None:
         remote_url=config.llm.remote_url,
         remote_api_key=config.llm.remote_api_key,
         remote_model=config.llm.remote_model,
+        auto_detect_remote=config.llm.auto_detect,
     )
     print(json.dumps(results, indent=2, default=str))
 
@@ -432,6 +434,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
                 remote_url=config.llm.remote_url,
                 remote_api_key=config.llm.remote_api_key,
                 remote_model=config.llm.remote_model,
+                auto_detect_remote=config.llm.auto_detect,
             )
             payload = {**snapshot, "llm": llm_results}
 

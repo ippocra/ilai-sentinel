@@ -744,7 +744,7 @@ class TestDaemonJobPollCadence:
             cli, "hardware_collect", lambda: {"timestamp": "now", "hardware": {}}
         )
         monkeypatch.setattr(
-            cli, "probe_llm", lambda ports, urls, remote_url="", remote_api_key="", remote_model="": {}
+            cli, "probe_llm", lambda ports, urls, remote_url="", remote_api_key="", remote_model="", auto_detect_remote=False: {}
         )
         monkeypatch.setattr(
             cli, "OfflineQueue",

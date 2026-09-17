@@ -127,7 +127,7 @@ def test_probe_llm_command_uses_configured_ports_and_urls_by_default(monkeypatch
 
     monkeypatch.setattr(cli, "load_config", lambda config_path=None: config)
 
-    def fake_probe(ports, urls, remote_url="", remote_api_key="", remote_model=""):
+    def fake_probe(ports, urls, remote_url="", remote_api_key="", remote_model="", auto_detect_remote=False):
         calls.append((ports, urls))
         return {"backends": [], "detected_backends": []}
 

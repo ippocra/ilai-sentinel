@@ -14,6 +14,66 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Default Regolo endpoint — matches cloud/bootstrap.sh in the ilai repo.
+DEFAULT_REGOLO_BASE_URL = "https://api.regolo.ai/v1"
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Parse a KEY=VALUE env file (the format ilai writes for regolo.env).
+
+    Tolerates blank lines, ``#`` comments, a leading ``export ``, and values
+    wrapped in single or double quotes. No variable expansion is performed.
+    """
+    out: dict[str, str] = {}
+    try:
+        text = path.read_text()
+    except OSError:
+        return out
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("export "):
+            s = s[len("export "):].lstrip()
+        key, sep, value = s.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        out.setdefault(key, value)
+    return out
+
+
+def detect_remote_from_env(path: Path | None = None) -> dict[str, str] | None:
+    """Auto-detect a remote (Regolo) endpoint from the env file written by
+    ilai's bootstrap at ``~/.ilai/cloud/regolo.env``.
+
+    Returns ``{"remote_url", "remote_api_key", "remote_model"}`` or None when
+    the file is absent or carries no API key. An explicit *path* (e.g. for
+    tests) takes precedence over the default location. The base URL defaults
+    to ``DEFAULT_REGOLO_BASE_URL`` when the file omits it.
+    """
+    candidates = [path] if path is not None else [
+        Path.home() / ".ilai" / "cloud" / "regolo.env",
+    ]
+    for candidate in candidates:
+        if candidate is None or not candidate.is_file():
+            continue
+        data = _parse_env_file(candidate)
+        api_key = data.get("REGOLO_API_KEY", "")
+        if not api_key:
+            return None
+        return {
+            "remote_url": data.get("REGOLO_BASE_URL", "") or DEFAULT_REGOLO_BASE_URL,
+            "remote_api_key": api_key,
+            "remote_model": data.get("REGOLO_MODEL", ""),
+        }
+    return None
+
 
 def _probe_url(url: str, timeout: float = 3.0) -> dict[str, Any] | None:
     """Try to get metadata from a URL, return None on failure."""
@@ -404,8 +464,13 @@ def probe(
     remote_url: str = "",
     remote_api_key: str = "",
     remote_model: str = "",
+    auto_detect_remote: bool = False,
 ) -> dict[str, Any]:
     """Probe for active LLM backends: remote endpoint first, then local ports.
+
+    When *auto_detect_remote* is set and no explicit *remote_url* is given,
+    the remote endpoint is auto-detected from ``~/.ilai/cloud/regolo.env``
+    (written by ilai's bootstrap on ILAI-on-Cloud boxes).
 
     Returns:
     {
@@ -420,6 +485,12 @@ def probe(
 
     # Remote (cloud) inference first — on ILAI-on-Cloud boxes this is the
     # primary backend (Regolo) and local port scanning finds nothing.
+    if not remote_url and auto_detect_remote:
+        detected = detect_remote_from_env()
+        if detected:
+            remote_url = detected["remote_url"]
+            remote_api_key = remote_api_key or detected["remote_api_key"]
+            remote_model = remote_model or detected["remote_model"]
     if remote_url:
         remote = probe_remote(remote_url, remote_api_key, remote_model)
         if remote:

@@ -384,11 +384,17 @@ def cmd_daemon(args: argparse.Namespace) -> None:
     client = SentinelClient(config.server_url, token)
     queue = OfflineQueue(config.queue.path, config.queue.max_days)
     token_counter = TokenCounter()
+    # Last successful backup-job poll (epoch seconds). The poll runs on its
+    # own cadence (job_poll_interval_seconds, default 6h) independent of the
+    # metrics interval, so a queued backup job is picked up within one poll
+    # cycle even though the metrics loop ticks much more often.
+    last_job_poll = 0.0
 
     logger.info(
-        "Sentinel daemon starting (server=%s, interval=%ds)",
+        "Sentinel daemon starting (server=%s, interval=%ds, job-poll=%ds)",
         config.server_url,
         config.metrics_interval_seconds,
+        config.job_poll_interval_seconds,
     )
 
     while True:
@@ -425,13 +431,21 @@ def cmd_daemon(args: argparse.Namespace) -> None:
             # 3. Report token usage (diff of cumulative counters)
             _maybe_report_token_usage(client, token_counter, llm_results, logger)
 
-            # 4. Check for backup jobs
-            try:
-                job_result = client.claim_backup_job()
-                if job_result and job_result.get("job"):
-                    logger.info("New backup job: %s", job_result["job"]["id"])
-            except requests.RequestException as exc:
-                logger.warning("Job poll error: %s", exc)
+            # 4. Check for backup jobs — on its own cadence, not every metrics
+            # cycle. Backup jobs are low-frequency and the poll was previously
+            # hitting /api/jobs/next/ once per metrics interval (default 60s),
+            # which is 24x more often than needed. A network failure should not
+            # delay the next attempt by a full interval, so the clock only
+            # advances on a completed poll.
+            now = time.monotonic()
+            if now - last_job_poll >= config.job_poll_interval_seconds:
+                try:
+                    job_result = client.claim_backup_job()
+                    if job_result and job_result.get("job"):
+                        logger.info("New backup job: %s", job_result["job"]["id"])
+                except requests.RequestException as exc:
+                    logger.warning("Job poll error: %s", exc)
+                last_job_poll = now
 
             # 5. Wait for next cycle
             time.sleep(config.metrics_interval_seconds)

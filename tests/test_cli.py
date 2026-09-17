@@ -709,7 +709,90 @@ class TestConfigPathConsistency:
         assert "systemctl --user enable --now ilai-sentinel" in output
 
 
-# ── CLI integration (no network) ──────────────────────────────────
+# ── Daemon behavior ───────────────────────────────────────────────
+
+
+class TestDaemonJobPollCadence:
+    """The backup-job poll must run on job_poll_interval_seconds, not on
+    every metrics cycle. Regression: the poll previously hit
+    /api/jobs/next/ once per 60s metrics cycle — 24x more often than the
+    6h default requires."""
+
+    def _run_daemon_cycles(self, cycles, monkeypatch, tmp_path, poll_interval):
+        """Run cmd_daemon for exactly `cycles` metrics cycles.
+
+        Every collaborator is faked; the sleep on the final cycle raises
+        KeyboardInterrupt to end the loop. Returns the claim_backup_job call
+        count.
+        """
+        import argparse
+        import time as _time
+
+        from sentinel import cli
+        from sentinel.config import Config
+
+        config = Config()
+        config.server_url = "https://mothership.example.com"
+        config.metrics_interval_seconds = 0
+        config.job_poll_interval_seconds = poll_interval
+        config.auth.token_file = str(tmp_path / "device.token")
+        config.queue.path = str(tmp_path / "queue.db")
+        Path(config.auth.token_file).write_text("device-token")
+
+        monkeypatch.setattr(cli, "load_config", lambda config_path=None: config)
+        monkeypatch.setattr(
+            cli, "hardware_collect", lambda: {"timestamp": "now", "hardware": {}}
+        )
+        monkeypatch.setattr(cli, "probe_llm", lambda ports, urls: {})
+        monkeypatch.setattr(
+            cli, "OfflineQueue",
+            lambda path, max_days: type("Q", (), {
+                "size": lambda self: 0,
+                "add": lambda self, p: None,
+                "drain_with_ids": lambda self: [],
+            })(),
+        )
+        monkeypatch.setattr(
+            cli, "TokenCounter",
+            lambda: type("T", (), {"sample": lambda self, p: None})(),
+        )
+
+        calls = []
+
+        class FakeClient:
+            def __init__(self, server_url, token):
+                pass
+
+            def submit_metrics(self, snapshots):
+                return {"created": 1}
+
+            def claim_backup_job(self):
+                calls.append(_time.monotonic())
+                return {"job": None}
+
+        monkeypatch.setattr(cli, "SentinelClient", FakeClient)
+
+        counter = {"n": 0}
+
+        def fake_sleep(seconds):
+            counter["n"] += 1
+            if counter["n"] >= cycles:
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(cli.time, "sleep", fake_sleep)
+        try:
+            cli.cmd_daemon(argparse.Namespace(config=None, log_level=None))
+        except KeyboardInterrupt:
+            pass
+        return calls
+
+    def test_job_poll_not_every_cycle(self, monkeypatch, tmp_path):
+        """With a 1h poll interval and 120 fast metrics cycles, the job poll
+        must fire only on the first cycle — not on every cycle."""
+        calls = self._run_daemon_cycles(120, monkeypatch, tmp_path, 3600)
+        assert len(calls) == 1, f"expected 1 poll in 120 cycles, got {len(calls)}"
+
+
 
 
 class TestCLIIntegration:

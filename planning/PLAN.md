@@ -102,7 +102,9 @@ server_url = "https://mothership.ippocra.com"
 device_id = "..."
 metrics_interval_seconds = 60
 heartbeat_interval_seconds = 60
-job_poll_interval_seconds = 60
+# How often the daemon polls for queued backup jobs (default: 6h).
+# Independent of the metrics interval — backup jobs are low-frequency.
+job_poll_interval_seconds = 21600
 
 [auth]
 token_file = "/var/lib/ilai-reporter/device.token"

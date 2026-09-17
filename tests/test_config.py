@@ -39,6 +39,21 @@ def test_save_config_round_trips_nested_settings(tmp_path):
     assert loaded.llm.extra_urls == ["http://127.0.0.1:8080"]
 
 
+def test_job_poll_interval_default_is_six_hours():
+    """Backup jobs are low-frequency; the default poll cadence must not
+    track the 60s metrics interval (that was 24x more server load than
+    needed)."""
+    assert Config().job_poll_interval_seconds == 6 * 3600
+
+
+def test_job_poll_interval_round_trips(tmp_path):
+    config_path = tmp_path / "sentinel.toml"
+    config = Config(job_poll_interval_seconds=3600)
+    save_config(config, config_path)
+    loaded = load_config(str(config_path))
+    assert loaded.job_poll_interval_seconds == 3600
+
+
 def test_save_config_restricts_file_and_directory_permissions(tmp_path):
     config_path = tmp_path / "private" / "sentinel.toml"
 

@@ -39,6 +39,33 @@ def test_save_config_round_trips_nested_settings(tmp_path):
     assert loaded.llm.extra_urls == ["http://127.0.0.1:8080"]
 
 
+def test_llm_remote_fields_round_trip(tmp_path):
+    """Remote inference config (Regolo) must survive save/load."""
+    config_path = tmp_path / "sentinel.toml"
+    config = Config()
+    config.llm.remote_url = "https://api.regolo.ai/v1"
+    config.llm.remote_api_key = "regolo_key_123"
+    config.llm.remote_model = "gpt-4o"
+    config.llm.auto_detect = False
+
+    save_config(config, config_path)
+    loaded = load_config(str(config_path))
+
+    assert loaded.llm.remote_url == "https://api.regolo.ai/v1"
+    assert loaded.llm.remote_api_key == "regolo_key_123"
+    assert loaded.llm.remote_model == "gpt-4o"
+    assert loaded.llm.auto_detect is False
+
+
+def test_llm_remote_defaults_are_empty():
+    """No remote inference by default — local port scanning is the default mode."""
+    llm = Config().llm
+    assert llm.remote_url == ""
+    assert llm.remote_api_key == ""
+    assert llm.remote_model == ""
+    assert llm.auto_detect is True
+
+
 def test_job_poll_interval_default_is_six_hours():
     """Backup jobs are low-frequency; the default poll cadence must not
     track the 60s metrics interval (that was 24x more server load than

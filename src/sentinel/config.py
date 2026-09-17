@@ -30,6 +30,12 @@ class LLMConfig:
     auto_detect: bool = True
     ports: list[int] = field(default_factory=lambda: [8888, 8013, 8000, 30000])
     extra_urls: list[str] = field(default_factory=list)
+    # Remote (cloud) inference — e.g. Regolo on ILAI-on-Cloud boxes. When
+    # remote_url is set, the daemon probes that endpoint with the API key
+    # instead of scanning local ports.
+    remote_url: str = ""
+    remote_api_key: str = ""
+    remote_model: str = ""
 
 
 @dataclass
@@ -139,6 +145,12 @@ def load_config(config_path: str | None = None) -> Config:
             config.llm.ports = [int(p) for p in toml_data["llm"]["ports"]]
         if "extra_urls" in toml_data["llm"]:
             config.llm.extra_urls = toml_data["llm"]["extra_urls"]
+        if "remote_url" in toml_data["llm"]:
+            config.llm.remote_url = toml_data["llm"]["remote_url"]
+        if "remote_api_key" in toml_data["llm"]:
+            config.llm.remote_api_key = toml_data["llm"]["remote_api_key"]
+        if "remote_model" in toml_data["llm"]:
+            config.llm.remote_model = toml_data["llm"]["remote_model"]
 
     # Apply queue from TOML
     if "queue" in toml_data and isinstance(toml_data["queue"], dict):

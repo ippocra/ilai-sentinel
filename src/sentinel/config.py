@@ -49,7 +49,12 @@ class Config:
     device_id: str = ""
     metrics_interval_seconds: int = 60
     heartbeat_interval_seconds: int = 60
-    job_poll_interval_seconds: int = 60
+    # How often the daemon polls Mothership for queued backup jobs. Kept
+    # separate from metrics_interval_seconds: backup jobs are low-frequency
+    # (on-demand from the dashboard) and polling for them on every 60s
+    # metrics cycle is unnecessary load on the server. 6h means a requested
+    # backup job is picked up within at most 6 hours.
+    job_poll_interval_seconds: int = 6 * 3600
 
     auth: AuthConfig = field(default_factory=AuthConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)

@@ -492,7 +492,18 @@ def _save_token(token: str, path: str) -> None:
 
 
 def _service_unit(config_file: str) -> str:
-    """Return the user-level systemd unit for Sentinel."""
+    """Return the user-level systemd unit for Sentinel.
+
+    ExecStart points at the sentinel executable in the SAME bin directory as
+    the running interpreter. This works for BOTH install styles:
+      * ``pip install --user``  ->  ~/.local/bin/sentinel
+      * a ``uv``-managed venv   ->  <venv>/bin/sentinel   (the box pins 3.11)
+    Hardcoding ``%h/.local/bin/sentinel`` (the old behaviour) breaks the venv
+    path, because there the binary lives under the venv, not in ``~/.local``.
+    ``sys.executable`` is always the interpreter that is running this very
+    command, so its directory is the correct, install-independent location.
+    """
+    sentinel_bin = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "sentinel")
     return f"""[Unit]
 Description=Ippocra ILAI Sentinel
 After=network-online.target
@@ -500,7 +511,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/sentinel --config {config_file} daemon
+ExecStart={sentinel_bin} --config {config_file} daemon
 Restart=always
 RestartSec=10
 NoNewPrivileges=true

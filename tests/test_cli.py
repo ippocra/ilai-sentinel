@@ -41,6 +41,8 @@ class TestParserConstruction:
             "run-once",
             "probe-llm",
             "collect-hardware",
+            "backup-now",
+            "restore",
             "daemon",
             "service",
             "updates",
@@ -391,7 +393,10 @@ class TestConfigPathConsistency:
         )
 
         unit = (tmp_path / ".config" / "systemd" / "user" / "ilai-sentinel.service").read_text()
-        assert f"ExecStart=%h/.local/bin/sentinel --config {DEFAULT_CONFIG_PATH} daemon" in unit
+        # ExecStart must point at the sentinel binary next to the running
+        # interpreter (install-style independent) and use the default config.
+        assert f"--config {DEFAULT_CONFIG_PATH} daemon" in unit
+        assert "ExecStart=" in unit
         assert "Installed user service" in capsys.readouterr().out
 
     def test_service_install_generates_user_service(self, tmp_path, monkeypatch, capsys):

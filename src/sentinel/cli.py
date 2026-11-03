@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import requests
+from urllib.parse import urljoin
 
 from sentinel import __version__
 from sentinel.client import SentinelClient
@@ -344,6 +345,156 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     sys.exit(1 if failures else 0)
 
 
+def _backup_tick(client: SentinelClient, config) -> None:
+    """Poll for a pending backup job and execute it.
+
+    The full pipeline (archive the Hermes distribution, AES-256-GCM encrypt
+    with the mothership-issued data key, upload to object storage, report
+    completion) lives in :mod:`sentinel.backup`. A job failure is reported to
+    mothership as ``status=failed`` and never crashes the daemon.
+    """
+    from .backup import BackupError, execute_backup
+
+    try:
+        job_result = client.claim_backup_job()
+    except Exception as exc:
+        logger.warning("Job poll error: %s", exc)
+        return
+
+    if not job_result or not job_result.get("job"):
+        return
+
+    job = job_result["job"]
+    job_id = job.get("id", "")
+    logger.info("Backup job claimed: id=%s kind=%s", job_id, job.get("job_kind"))
+    try:
+        payload = execute_backup(
+            client,
+            config,
+            job,
+            job.get("upload", {}),
+            job.get("encryption", {}),
+        )
+    except BackupError as exc:
+        logger.error("Backup job %s failed: %s", job_id, exc)
+        client.complete_backup_job(job_id, status="failed", output=str(exc))
+        return
+    except Exception as exc:  # noqa: BLE001 — never crash the daemon
+        logger.exception("Backup job %s crashed: %s", job_id, exc)
+        client.complete_backup_job(job_id, status="failed", output=str(exc))
+        return
+
+    logger.info(
+        "Backup job %s uploaded: %d bytes, %d files, object=%s",
+        job_id,
+        payload["size_bytes"],
+        payload["files_backed_up"],
+        payload["object_key"],
+    )
+    try:
+        client.complete_backup_job(job_id, **payload)
+    except Exception as exc:
+        logger.error("Backup job %s: upload OK but completion report failed: %s", job_id, exc)
+
+
+def cmd_backup_now(args: argparse.Namespace) -> None:
+    """Claim the next backup job and execute it immediately (no waiting)."""
+    _setup_logging(args.log_level)
+    config = load_config(args.config)
+    token = _load_token(config.auth.token_file)
+    if not token:
+        print("ERROR: No device token found. Run 'enroll' first.", file=sys.stderr)
+        sys.exit(1)
+
+    client = SentinelClient(config.server_url, token)
+    from .backup import BackupError, execute_backup
+
+    try:
+        job_result = client.claim_backup_job()
+    except Exception as exc:
+        print(f"ERROR: could not reach mothership: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not job_result or not job_result.get("job"):
+        print("No pending backup job.")
+        sys.exit(0)
+
+    job = job_result["job"]
+    job_id = job.get("id", "")
+    print(f"Backup job {job_id} claimed — running now...")
+    try:
+        payload = execute_backup(
+            client, config, job, job.get("upload", {}), job.get("encryption", {}),
+        )
+    except BackupError as exc:
+        print(f"ERROR: backup failed: {exc}", file=sys.stderr)
+        client.complete_backup_job(job_id, status="failed", output=str(exc))
+        sys.exit(1)
+
+    print(
+        f"✅ Backup uploaded: {payload['size_bytes']:,} bytes, "
+        f"{payload['files_backed_up']} files\n   Object: {payload['object_key']}"
+    )
+    client.complete_backup_job(job_id, **payload)
+
+
+def cmd_restore(args: argparse.Namespace) -> None:
+    """Download a backup object and decrypt it with a DEK from mothership."""
+    _setup_logging(args.log_level)
+    config = load_config(args.config)
+    token = _load_token(config.auth.token_file)
+    if not token:
+        print("ERROR: No device token found. Run 'enroll' first.", file=sys.stderr)
+        sys.exit(1)
+
+    import base64
+
+    from .backup import restore_object
+
+    # 1. Ask mothership for the wrapped DEK of this backup.
+    client = SentinelClient(config.server_url, token)
+    url = urljoin(config.server_url, f"/api/backup-jobs/{args.backup_id}/restore-key/")
+    try:
+        resp = client.session.post(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        print(f"ERROR: could not fetch restore key: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    data_key_b64 = data.get("plaintext_data_key", "")
+    if not data_key_b64:
+        print("ERROR: mothership did not return a data key.", file=sys.stderr)
+        sys.exit(1)
+
+    # 2. Download the object from object storage (Seeweb COS / DO Spaces).
+    from .backup import _load_storage_config
+    import boto3
+
+    sc = _load_storage_config()
+    if not sc:
+        print("ERROR: no object storage configured on this machine.", file=sys.stderr)
+        sys.exit(1)
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=sc["endpoint_url"],
+        region_name=sc["region"],
+        aws_access_key_id=sc["access_key_id"],
+        aws_secret_access_key=sc["secret_access_key"],
+    )
+    workdir = Path(config.backup.workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    object_path = workdir / (Path(args.object_key).name)
+    print(f"Downloading {args.object_key} ...")
+    s3.download_file(sc["bucket"], args.object_key, str(object_path))
+
+    # 3. Decrypt.
+    out = Path(args.out) if args.out else workdir / "restored"
+    restore_object(object_path, out, data_key_b64, data.get("dek_nonce", ""))
+    print(f"✅ Restored to {out}")
+    object_path.unlink(missing_ok=True)
+
+
 def _maybe_report_token_usage(
     client: "SentinelClient",
     counter: "TokenCounter",
@@ -460,12 +611,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
             # advances on a completed poll.
             now = time.monotonic()
             if now - last_job_poll >= config.job_poll_interval_seconds:
-                try:
-                    job_result = client.claim_backup_job()
-                    if job_result and job_result.get("job"):
-                        logger.info("New backup job: %s", job_result["job"]["id"])
-                except requests.RequestException as exc:
-                    logger.warning("Job poll error: %s", exc)
+                _backup_tick(client, config)
                 last_job_poll = now
 
             # 5. Wait for next cycle
@@ -705,6 +851,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Collect hardware metrics",
         description="Gather hardware metrics (CPU, RAM, disk, GPU) and print as JSON.",
     ).set_defaults(func=cmd_collect_hardware)
+
+    # ── backup-now ──────────────────────────────────────────────────
+    p_backup = subparsers.add_parser(
+        "backup-now",
+        help="Run a backup immediately (claim next job, archive, encrypt, upload)",
+        description=(
+            "Claim the next queued backup job from mothership and execute it "
+            "right now: archive the Hermes distribution, AES-256-GCM encrypt "
+            "with the issued data key, upload to object storage, report completion."
+        ),
+    )
+    p_backup.set_defaults(func=cmd_backup_now)
+
+    # ── restore ─────────────────────────────────────────────────────
+    p_restore = subparsers.add_parser(
+        "restore",
+        help="Download and decrypt a stored backup object",
+        description=(
+            "Fetch the data key for a backup from mothership (restore-key "
+            "endpoint), download the object from object storage, and decrypt "
+            "it locally. Used in the disaster-recovery runbook."
+        ),
+    )
+    p_restore.add_argument("backup_id", help="BackupLog id (from mothership dashboard)")
+    p_restore.add_argument("object_key", help="Object key in the bucket")
+    p_restore.add_argument(
+        "--out",
+        default=None,
+        help="Output file path (default: <workdir>/restored)",
+    )
+    p_restore.set_defaults(func=cmd_restore)
 
     # ── daemon ──────────────────────────────────────────────────────
     p_daemon = subparsers.add_parser(

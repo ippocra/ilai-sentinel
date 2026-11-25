@@ -162,7 +162,10 @@ class TestSubcommandParsing:
         parser = build_parser()
         args = parser.parse_args(["updates"])
         assert args.command == "updates"
-        assert args.upgrade_command == "uv tool upgrade ilai-sentinel"
+        assert args.upgrade_command == (
+            "uv tool install --force "
+            "git+https://github.com/ippocra/ilai-sentinel.git"
+        )
         assert args.skip_package_upgrade is False
         assert args.no_restart is False
 
@@ -526,14 +529,23 @@ class TestConfigPathConsistency:
         cli.cmd_updates(
             argparse.Namespace(
                 config=None,
-                upgrade_command="uv tool upgrade ilai-sentinel",
+                upgrade_command=(
+                    "uv tool install --force "
+                    "git+https://github.com/ippocra/ilai-sentinel.git"
+                ),
                 skip_package_upgrade=False,
                 no_restart=False,
             )
         )
 
         assert commands == [
-            ["uv", "tool", "upgrade", "ilai-sentinel"],
+            [
+                "uv",
+                "tool",
+                "install",
+                "--force",
+                "git+https://github.com/ippocra/ilai-sentinel.git",
+            ],
             [
                 str(sentinel_bin),
                 "--config",
@@ -546,7 +558,7 @@ class TestConfigPathConsistency:
             ["systemctl", "--user", "restart", "ilai-sentinel"],
         ]
         output = capsys.readouterr().out
-        assert "Updating package: uv tool upgrade ilai-sentinel" in output
+        assert "Updating package: uv tool install --force git+https://github.com/ippocra/ilai-sentinel.git" in output
         assert "Refreshing user service:" in output
         assert "Restarted ilai-sentinel user service" in output
 
@@ -564,7 +576,10 @@ class TestConfigPathConsistency:
         cli.cmd_updates(
             argparse.Namespace(
                 config="/tmp/custom.toml",
-                upgrade_command="uv tool upgrade ilai-sentinel",
+                upgrade_command=(
+                    "uv tool install --force "
+                    "git+https://github.com/ippocra/ilai-sentinel.git"
+                ),
                 skip_package_upgrade=True,
                 no_restart=True,
             )

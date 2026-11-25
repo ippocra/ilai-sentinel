@@ -750,7 +750,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_updates.add_argument(
         "--upgrade-command",
-        default="uv tool upgrade ilai-sentinel",
+        default="uv tool install --force git+https://github.com/ippocra/ilai-sentinel.git",
         help="Package upgrade command to run before service refresh",
     )
     p_updates.add_argument(

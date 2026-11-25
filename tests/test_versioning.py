@@ -45,10 +45,82 @@ def test_hermes_version_uses_cli_global_option(monkeypatch):
         calls.append(command)
         return FakeResult()
 
+    # Resolve `hermes` to a plain PATH name (no home-dir fallback exercised).
+    monkeypatch.setattr(hardware.shutil, "which", lambda name: "hermes")
     monkeypatch.setattr(hardware.subprocess, "run", fake_run)
 
     assert hardware.get_hermes_version() == "0.21.0"
     assert calls == [["hermes", "--version"]]
+
+
+def test_hermes_version_resolves_executable_outside_minimal_service_path(
+    monkeypatch, tmp_path
+):
+    """The systemd user service PATH omits $HOME/.local/bin, where user-local
+    installs of `hermes` live (fido box bug: version reported stale/empty)."""
+    from sentinel import hardware
+
+    # Fake $HOME with a user-local launcher, not on PATH.
+    home = tmp_path / "home"
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    launcher = bin_dir / "hermes"
+    launcher.write_text("#!/bin/sh\necho v1\n")
+    launcher.chmod(0o755)
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(hardware.shutil, "which", lambda _: None)
+
+    class FakeResult:
+        returncode = 0
+        stdout = "Hermes Agent v0.23.4 (2026.9.24) · stable · local abc123\n"
+
+    def fake_run(command, **kwargs):
+        assert command[0] == str(launcher), "must use the resolved absolute path"
+        assert command[1:] == ["--version"]
+        return FakeResult()
+
+    monkeypatch.setattr(hardware.subprocess, "run", fake_run)
+
+    assert hardware.get_hermes_version() == "0.23.4"
+
+
+def test_hermes_version_prefers_which_resolution_over_home_fallback(monkeypatch):
+    """When `hermes` IS on PATH, shutil.which wins over the home-dir probes."""
+    from sentinel import hardware
+
+    monkeypatch.setenv("HOME", "/nonexistent-home")
+
+    class FakeResult:
+        returncode = 0
+        stdout = "Hermes Agent v0.20.0 (2026.8.01) · upstream abc123\n"
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return FakeResult()
+
+    monkeypatch.setattr(hardware.shutil, "which", lambda name: "/usr/bin/hermes")
+    monkeypatch.setattr(hardware.subprocess, "run", fake_run)
+
+    assert hardware.get_hermes_version() == "0.20.0"
+    assert calls == [["/usr/bin/hermes", "--version"]]
+
+
+def test_hermes_version_returns_empty_when_no_executable_found(monkeypatch):
+    """No hermes on PATH and no home-dir install → empty string, no crash."""
+    from sentinel import hardware
+
+    monkeypatch.setenv("HOME", "/nonexistent-home")
+    monkeypatch.setattr(hardware.shutil, "which", lambda _: None)
+
+    def raise_missing(*a, **k):
+        raise AssertionError("subprocess must not be invoked")
+
+    monkeypatch.setattr(hardware.subprocess, "run", raise_missing)
+
+    assert hardware.get_hermes_version() == ""
 
 
 def test_hermes_version_prefers_cli_over_stale_import(monkeypatch):
@@ -62,6 +134,7 @@ def test_hermes_version_prefers_cli_over_stale_import(monkeypatch):
     monkeypatch.setattr(
         hardware.subprocess, "run", lambda *a, **k: FakeResult()
     )
+    monkeypatch.setattr(hardware.shutil, "which", lambda name: "hermes")
 
     class StaleHermesCli:
         __version__ = ""  # empty, as seen on the medical campus box

@@ -33,31 +33,38 @@ def get_hermes_version() -> str:
     different or stale checkout whose ``__version__`` is empty, which would
     otherwise mask the real value. The import is only a fallback for when the
     CLI is unavailable.
+
+    When the CLI is not on ``PATH`` (the systemd user service runs with a
+    minimal environment PATH that omits ``$HOME/.local/bin``), the executable
+    is resolved via the conventional user install locations so the probe still
+    works without editing the service unit.
     """
     # 1. CLI — ground truth, matches the user-visible `hermes --version`.
     #    The executable on PATH may itself be a launcher (e.g. a uv tool
     #    wrapper), which defers to the real interpreter it invokes. In that
     #    case the `hermes_cli` module resolves to the actual distribution,
     #    so prefer it over the launcher's stale or missing `__version__`.
-    try:
-        result = subprocess.run(
-            ["hermes", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            first_line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-            # Expected: "Hermes Agent v0.21.0 (2026.8.31) · upstream ..."
-            marker = " v"
-            if marker in first_line:
-                value = first_line.split(marker, 1)[1].split(" ", 1)[0].strip()
-                if value:
-                    return value
-            if first_line:
-                return first_line.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, IndexError):
-        pass
+    executable = _resolve_hermes_executable()
+    if executable is not None:
+        try:
+            result = subprocess.run(
+                [executable, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                first_line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+                # Expected: "Hermes Agent v0.21.0 (2026.8.31) · upstream ..."
+                marker = " v"
+                if marker in first_line:
+                    value = first_line.split(marker, 1)[1].split(" ", 1)[0].strip()
+                    if value:
+                        return value
+                if first_line:
+                    return first_line.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired, IndexError):
+            pass
 
     # 2. Installed package — fallback when the CLI is missing or non-zero exit.
     try:
@@ -69,6 +76,28 @@ def get_hermes_version() -> str:
         pass
 
     return ""
+
+
+def _resolve_hermes_executable() -> str | None:
+    """Locate the ``hermes`` executable even under a minimal service PATH.
+
+    The daemon runs from a systemd user service whose ``DefaultEnvironment``
+    PATH typically omits ``$HOME/.local/bin``, where user-local installs (uv
+    tool installs, the installer's launcher) live. ``shutil.which`` alone
+    would return ``None`` there, so we also probe the conventional user
+    install locations.
+    """
+    found = shutil.which("hermes")
+    if found:
+        return found
+    home = os.path.expanduser("~")
+    for candidate in (
+        os.path.join(home, ".local", "bin", "hermes"),
+        os.path.join(home, ".hermes", "bin", "hermes"),
+    ):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 def _get_gpu_info() -> list[dict[str, Any]]:

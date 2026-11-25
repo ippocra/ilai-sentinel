@@ -98,14 +98,16 @@ To update to the latest version and refresh the user-level systemd service:
 sentinel updates
 ```
 
-This runs `uv tool upgrade ilai-sentinel`, reinstalls the user service unit with
-the updated `sentinel` executable, reloads user systemd, and restarts
-`ilai-sentinel`. Reloading systemd is only strictly required when the unit file
-changes, but the update command does it every time so service template fixes are
-picked up consistently. Use `sentinel updates --no-restart` to refresh the
-package and unit without restarting the service, or
-`sentinel updates --skip-package-upgrade` to only refresh/restart the user
-service after installing a package some other way.
+This runs `uv tool install --force git+https://github.com/ippocra/ilai-sentinel.git`,
+reinstalls the user service unit with the updated `sentinel` executable, reloads
+user systemd, and restarts `ilai-sentinel`. The force-reinstall from the git
+branch (rather than `uv tool upgrade`) keeps the recorded install source
+durable, so upgrades work even if the original install came from a local path.
+Reloading systemd is only strictly required when the unit file changes, but the
+update command does it every time so service template fixes are picked up
+consistently. Use `sentinel updates --no-restart` to refresh the package and
+unit without restarting the service, or `sentinel updates --skip-package-upgrade`
+to only refresh/restart the user service after installing a package some other way.
 
 ## Configuration
 
